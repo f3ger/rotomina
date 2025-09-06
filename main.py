@@ -1159,6 +1159,7 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
 async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool:
     """
     Optimized login sequence with improved XML parsing error handling
+    Updated for new Discord authorization UI
     
     Args:
         device_id: Device identifier
@@ -1171,19 +1172,12 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
     temp_dir = Path(tempfile.mkdtemp())
     
     try:
-        # Keep track of scroll button coordinates across function calls
-        scroll_button_coords = None
-        
         # Create a reusable function for UI interaction
         async def find_and_tap_element(search_terms: list, max_attempts: int = 5, 
                                       wait_time: int = 2, partial_match: bool = False,
-                                      text_suffix: str = None):
+                                      text_suffix: str = None, just_check: bool = False):
             """Searches UI dump for elements matching search terms and taps them"""
-            nonlocal scroll_button_coords
             dump_file = temp_dir / "dump.xml"
-            
-            # Check if we're looking for Authorize button
-            is_authorize_search = any(term in ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"] for term in search_terms)
             
             for attempt in range(max_attempts):
                 # Get UI dump with direct file pull instead of parsing stdout
@@ -1235,60 +1229,23 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                             
                     except (ET.ParseError, UnicodeDecodeError, OSError) as e:
                         print(f"XML parsing error on attempt {attempt+1}: {str(e)}")
-                        # On last attempt, try regenerating UI dump with different parameters
-                        if attempt == max_attempts - 1:
-                            print("Trying alternative UI dump method on final attempt")
-                            alt_dump_cmd = 'uiautomator dump --compressed /sdcard/dump.xml'
-                            adb_pool.execute_command(device_id, ["adb", "shell", alt_dump_cmd])
-                            await asyncio.sleep(1)
-                            try:
-                                adb_pool.execute_command(device_id, ["adb", "pull", "/sdcard/dump.xml", str(dump_file)])
-                                tree = ET.parse(dump_file)
-                                root = tree.getroot()
-                            except:
-                                await asyncio.sleep(wait_time)
-                                continue
-                        else:
-                            await asyncio.sleep(wait_time)
-                            continue
+                        await asyncio.sleep(wait_time)
+                        continue
                     
-                    # Debug output
+                    # Debug output - only on first attempt
                     if attempt == 0:
                         clickable_elements = []
                         for elem in root.iter("node"):
                             if elem.get("clickable") == "true" and elem.get("text"):
-                                clickable_elements.append(f"{elem.get('text')}")
+                                clickable_elements.append(f"{elem.get('text')} (enabled={elem.get('enabled')})")
                         
                         if clickable_elements:
                             print(f"Clickable elements found: {', '.join(clickable_elements)}")
                         else:
                             print("No clickable elements found in UI dump")
                     
-                    # Look for the "Keep Scrolling" button
-                    for elem in root.iter("node"):
-                        if elem.get("clickable") != "true":
-                            continue
-                            
-                        elem_text = elem.get("text", "")
-                        if not elem_text:
-                            continue
-                            
-                        if ":point_down:" in elem_text or "Keep Scrolling" in elem_text:
-                            # Save coordinates for potential fallback
-                            bounds = elem.get("bounds", "")
-                            match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                            if match:
-                                x1, y1, x2, y2 = map(int, match.groups())
-                                center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-                                scroll_button_coords = (center_x, center_y)
-                                print(f"Found 'Keep Scrolling' button at {scroll_button_coords}")
-                                break
-                    
                     # Search for matches
                     for elem in root.iter("node"):
-                        if elem.get("clickable") != "true":
-                            continue
-                            
                         elem_text = elem.get("text", "")
                         if not elem_text:
                             continue
@@ -1308,18 +1265,30 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                             found_match = True
                             
                         if found_match:
-                            # Extract coordinates and tap
-                            bounds = elem.get("bounds", "")
-                            match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                            if match:
-                                x1, y1, x2, y2 = map(int, match.groups())
-                                center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-                                
-                                # Execute tap
-                                tap_cmd = f'input tap {center_x} {center_y}'
-                                adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
-                                print(f"Tapped '{elem_text}' at ({center_x}, {center_y})")
+                            # If we're just checking existence, return True
+                            if just_check:
+                                print(f"Found element: '{elem_text}' (enabled={elem.get('enabled')})")
                                 return True
+                            
+                            # Only tap if clickable and enabled
+                            if elem.get("clickable") == "true" and elem.get("enabled") == "true":
+                                # Extract coordinates and tap
+                                bounds = elem.get("bounds", "")
+                                match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                                if match:
+                                    x1, y1, x2, y2 = map(int, match.groups())
+                                    center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
+                                    
+                                    # Execute tap
+                                    tap_cmd = f'input tap {center_x} {center_y}'
+                                    adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
+                                    print(f"Tapped '{elem_text}' at ({center_x}, {center_y})")
+                                    return True
+                            else:
+                                if elem.get("clickable") == "true" or elem.get("enabled") == "true":
+                                    print(f"Found '{elem_text}' but it's not clickable/enabled (clickable={elem.get('clickable')}, enabled={elem.get('enabled')})")
+                                if just_check:
+                                    return True  # Still return True if just checking existence
                 
                 except Exception as e:
                     print(f"UI interaction error on attempt {attempt+1}: {str(e)}")
@@ -1328,28 +1297,19 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                 await asyncio.sleep(wait_time)
             
             # If we get here, we couldn't find the element after max_attempts
-            print(f"Failed to find elements matching: {search_terms}")
-            
-            # Fallback for Authorize button only
-            if is_authorize_search and scroll_button_coords:
-                print(f"Using FALLBACK: Directly tapping at scroll button coordinates: {scroll_button_coords}")
-                center_x, center_y = scroll_button_coords
-                tap_cmd = f'input tap {center_x} {center_y}'
-                result = adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
-                print(f"Fallback tap result: {result.returncode}")
-                return True
-                
+            if not just_check:
+                print(f"Failed to find elements matching: {search_terms}")
             return False
             
         # Create a reusable function for swipe gesture
         async def perform_swipe():
-            """Performs a swipe gesture from bottom to top"""
+            """Performs a swipe gesture from bottom to top (scrolling up)"""
             # Get screen size
             size_cmd = 'wm size'
             result = adb_pool.execute_command(device_id, ["adb", "shell", size_cmd])
             
             # Parse dimensions
-            width, height = 1080, 1920  # Default fallback
+            width, height = 1080, 1920  # Default fallback (original function values)
             override_match = re.search(r'Override size:\s*(\d+)x(\d+)', result.stdout)
             if override_match:
                 width, height = map(int, override_match.groups())
@@ -1358,7 +1318,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                 if physical_match:
                     width, height = map(int, physical_match.groups())
             
-            # Calculate swipe coordinates
+            # Calculate swipe coordinates (original function coordinates)
             start_x = int(width * 0.5)
             start_y = int(height * 0.70)
             end_x = int(width * 0.5)
@@ -1367,6 +1327,8 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
             # Execute swipe
             swipe_cmd = f'input swipe {start_x} {start_y} {end_x} {end_y} 500'
             adb_pool.execute_command(device_id, ["adb", "shell", swipe_cmd])
+            print(f"Performed swipe from ({start_x},{start_y}) to ({end_x},{end_y})")
+            wait_time=1
             return True
             
         # Function to check if apps are running
@@ -1389,38 +1351,75 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
             discord_login_success = await find_and_tap_element(["Discord Login"])
             
             if discord_login_success:
-                await asyncio.sleep(10)
+                # Wait longer for Discord page to fully load
+                print("Waiting for Discord authorization page to load...")
+                await asyncio.sleep(15)  # Increased from 10 to 15 seconds
                 
-                # Step 2: Find and handle scroll/authorize buttons
-                scroll_text = ["Keep Scrolling... :point_down:"]
-                await find_and_tap_element(scroll_text, text_suffix=":point_down:", partial_match=True)
-                await asyncio.sleep(1)
+                # Step 2: Check if "Keep Scrolling..." button exists (with more attempts)
+                print("Checking for 'Keep Scrolling...' button...")
+                scroll_text = ["Keep Scrolling...", "Keep Scrolling"]
+                keep_scrolling_exists = await find_and_tap_element(
+                    scroll_text, 
+                    partial_match=True, 
+                    just_check=True, 
+                    max_attempts=5,  # Increased from 2 to 5
+                    wait_time=3       # Wait 3 seconds between attempts
+                )
                 
-                # Step 3: Perform swipe
-                await perform_swipe()
-                await asyncio.sleep(5)
-                
-                # Step 4: Find Authorize button with extended matching
-                authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                authorize_success = await find_and_tap_element(authorize_text, max_attempts=3, partial_match=True)
-                
-                if authorize_success:
-                    await asyncio.sleep(3)  # Increased wait time
+                # Step 3: If Keep Scrolling exists, we need to scroll until Authorize appears
+                if keep_scrolling_exists:
+                    print("'Keep Scrolling...' button found, need to scroll to reveal Authorize button")
                     
-                    # Step 5: Recheck Service Status
-                    recheck_success = await find_and_tap_element(["Recheck Service Status"])
+                    # Try scrolling up to 3 times (increased from 2)
+                    for scroll_attempt in range(3):
+                        await perform_swipe()
+                        await asyncio.sleep(3)
+                        
+                        # Check if Authorize button is now available
+                        authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
+                        authorize_success = await find_and_tap_element(
+                            authorize_text, 
+                            max_attempts=3,  # Give it more attempts
+                            partial_match=True,
+                            wait_time=2
+                        )
+                        
+                        if authorize_success:
+                            print(f"Authorize button appeared and clicked after {scroll_attempt + 1} scroll(s)")
+                            break
+                        else:
+                            print(f"Authorize button not yet available after scroll {scroll_attempt + 1}")
+                            if scroll_attempt < 2:  # Don't wait after last scroll attempt
+                                await asyncio.sleep(2)
+                else:
+                    # If no Keep Scrolling button, try to find Authorize directly
+                    print("No 'Keep Scrolling...' button found, looking for Authorize button directly")
+                    authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
+                    authorize_success = await find_and_tap_element(
+                        authorize_text, 
+                        max_attempts=3, 
+                        partial_match=True,
+                        wait_time=2
+                    )
+                
+                # Continue with the rest of the flow if Authorize was clicked
+                if 'authorize_success' in locals() and authorize_success:
+                    await asyncio.sleep(3)
+                    
+                    # Step 4: Recheck Service Status
+                    recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
                     
                     if recheck_success:
-                        await asyncio.sleep(2)  # Increased wait time
+                        await asyncio.sleep(2)
                         
-                        # Step 6: Start service
-                        start_success = await find_and_tap_element(["Start service"])
+                        # Step 5: Start service
+                        start_success = await find_and_tap_element(["Start service"], max_attempts=3)
                         
                         if start_success:
                             print(f"Clicked all buttons, waiting for apps to initialize...")
                             await asyncio.sleep(30)
                             
-                            # Step 7: Verify apps are running
+                            # Step 6: Verify apps are running
                             if await check_apps_running():
                                 print(f"Login sequence completed successfully on {device_id}")
                                 return True
@@ -1449,7 +1448,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
     finally:
         # Clean up
         shutil.rmtree(temp_dir, ignore_errors=True)
-        
+
 # APK Management with UnownHash Mirror
 @ttl_cache(ttl=3600)
 def get_available_versions() -> Dict:
@@ -2360,7 +2359,6 @@ class MapWorldUpdater:
                     temp_path.unlink()
                     if backup_path and backup_path.exists():
                         backup_path.unlink()
-                    await self._notify_update_downloaded("MapWorld", f"{version_name} (no change)")
                     return True, final_path
                 else:
                     logger.info(f"Same version but different size, updating file")
