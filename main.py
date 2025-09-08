@@ -1158,8 +1158,7 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
 
 async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool:
     """
-    Optimized login sequence with improved XML parsing error handling
-    Updated for new Discord authorization UI
+    Optimized login sequence with improved WebView handling using coordinate-based taps
     
     Args:
         device_id: Device identifier
@@ -1172,17 +1171,19 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
     temp_dir = Path(tempfile.mkdtemp())
     
     try:
-        # Create a reusable function for UI interaction
+        # Track WebView bounds for coordinate calculation
+        webview_bounds = None
+        
         async def find_and_tap_element(search_terms: list, max_attempts: int = 5, 
                                       wait_time: int = 2, partial_match: bool = False,
                                       text_suffix: str = None, just_check: bool = False):
             """Searches UI dump for elements matching search terms and taps them"""
+            nonlocal webview_bounds
             dump_file = temp_dir / "dump.xml"
             
             for attempt in range(max_attempts):
-                # Get UI dump with direct file pull instead of parsing stdout
                 try:
-                    # First, generate the UI dump - fresh dump for each attempt
+                    # Generate UI dump
                     dump_cmd = 'uiautomator dump /sdcard/dump.xml'
                     dump_result = adb_pool.execute_command(device_id, ["adb", "shell", dump_cmd])
                     
@@ -1191,7 +1192,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                         await asyncio.sleep(wait_time)
                         continue
                     
-                    # Then pull the file instead of trying to parse it directly
+                    # Pull the file
                     pull_cmd = ["adb", "pull", "/sdcard/dump.xml", str(dump_file)]
                     pull_result = adb_pool.execute_command(device_id, pull_cmd)
                     
@@ -1200,19 +1201,16 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                         await asyncio.sleep(wait_time)
                         continue
                     
-                    # Parse the file locally with enhanced error handling
+                    # Parse the file
                     try:
-                        # Check if file is empty or too small
                         if dump_file.stat().st_size < 100:
                             print(f"UI dump file too small ({dump_file.stat().st_size} bytes) on attempt {attempt+1}")
                             await asyncio.sleep(wait_time)
                             continue
                             
-                        # Read and validate XML content
                         with open(dump_file, 'r', encoding='utf-8') as f:
                             content = f.read()
                         
-                        # Basic validation - must contain expected XML structure
                         if not content.strip().startswith('<?xml') or 'hierarchy' not in content:
                             print(f"Invalid XML structure in UI dump on attempt {attempt+1}")
                             await asyncio.sleep(wait_time)
@@ -1221,7 +1219,6 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                         tree = ET.parse(dump_file)
                         root = tree.getroot()
                         
-                        # Verify we have a valid hierarchy
                         if root.tag != 'hierarchy' or len(root) == 0:
                             print(f"Empty or invalid UI hierarchy on attempt {attempt+1}")
                             await asyncio.sleep(wait_time)
@@ -1232,7 +1229,16 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                         await asyncio.sleep(wait_time)
                         continue
                     
-                    # Debug output - only on first attempt
+                    # Check for WebView and save its bounds
+                    for elem in root.iter("node"):
+                        if elem.get("class") == "android.webkit.WebView" and "Discord" in elem.get("text", ""):
+                            bounds = elem.get("bounds", "")
+                            match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                            if match:
+                                webview_bounds = tuple(map(int, match.groups()))
+                                print(f"WebView found with bounds: {webview_bounds}")
+                    
+                    # Debug output only on first attempt
                     if attempt == 0:
                         clickable_elements = []
                         for elem in root.iter("node"):
@@ -1241,8 +1247,6 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                         
                         if clickable_elements:
                             print(f"Clickable elements found: {', '.join(clickable_elements)}")
-                        else:
-                            print("No clickable elements found in UI dump")
                     
                     # Search for matches
                     for elem in root.iter("node"):
@@ -1252,7 +1256,6 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                             
                         elem_text_lower = elem_text.lower()
                         
-                        # Check for direct match
                         found_match = False
                         for term in search_terms:
                             term_lower = term.lower()
@@ -1260,56 +1263,87 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                                 found_match = True
                                 break
                         
-                        # Additional check for text suffix if provided
                         if not found_match and text_suffix and text_suffix in elem_text:
                             found_match = True
                             
                         if found_match:
-                            # If we're just checking existence, return True
                             if just_check:
                                 print(f"Found element: '{elem_text}' (enabled={elem.get('enabled')})")
                                 return True
                             
-                            # Only tap if clickable and enabled
                             if elem.get("clickable") == "true" and elem.get("enabled") == "true":
-                                # Extract coordinates and tap
                                 bounds = elem.get("bounds", "")
                                 match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
                                 if match:
                                     x1, y1, x2, y2 = map(int, match.groups())
                                     center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
                                     
-                                    # Execute tap
                                     tap_cmd = f'input tap {center_x} {center_y}'
                                     adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
                                     print(f"Tapped '{elem_text}' at ({center_x}, {center_y})")
                                     return True
                             else:
-                                if elem.get("clickable") == "true" or elem.get("enabled") == "true":
-                                    print(f"Found '{elem_text}' but it's not clickable/enabled (clickable={elem.get('clickable')}, enabled={elem.get('enabled')})")
                                 if just_check:
-                                    return True  # Still return True if just checking existence
+                                    return True
                 
                 except Exception as e:
                     print(f"UI interaction error on attempt {attempt+1}: {str(e)}")
                 
-                # Wait before next attempt
                 await asyncio.sleep(wait_time)
             
-            # If we get here, we couldn't find the element after max_attempts
             if not just_check:
                 print(f"Failed to find elements matching: {search_terms}")
             return False
+        
+        async def tap_webview_authorize():
+            """Tap the Authorize button position in WebView using relative coordinates"""
+            if not webview_bounds:
+                print("No WebView bounds available, cannot tap authorize")
+                return False
+    
+            x1, y1, x2, y2 = webview_bounds
+            webview_width = x2 - x1
+            webview_height = y2 - y1
+    
+            # Based on actual button location: center at ~(1123, 943)
+            # WebView: (0, 245, 1920, 1008)
+            # Relative position: ~58.5% horizontal, ~91.5% vertical
+            positions_to_try = [
+                (0.585, 0.915),  # Exact center of button based on provided coordinates
+                (0.58, 0.91),    # Slightly adjusted
+                (0.59, 0.92),    # Alternative position
+                (0.60, 0.90),    # Slightly right and up
+                (0.55, 0.92),    # Slightly left
+            ]
+    
+            for x_pct, y_pct in positions_to_try:
+                authorize_x = x1 + int(webview_width * x_pct)
+                authorize_y = y1 + int(webview_height * y_pct)
+        
+                print(f"Attempting tap at WebView relative position ({x_pct:.1%}, {y_pct:.1%}) = ({authorize_x}, {authorize_y})")
+                tap_cmd = f'input tap {authorize_x} {authorize_y}'
+                adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
+        
+                await asyncio.sleep(3)
+        
+                # Check if we've left the WebView (successful auth)
+                dump_cmd = 'uiautomator dump /sdcard/dump.xml'
+                adb_pool.execute_command(device_id, ["adb", "shell", dump_cmd])
+                await asyncio.sleep(1)
+        
+                # Check if "Recheck Service Status" is now visible
+                if await find_and_tap_element(["Recheck Service Status"], max_attempts=1, just_check=True):
+                    print("Successfully authorized - found Recheck Service Status")
+                    return True
+    
+            return False
             
-        # Create a reusable function for swipe gesture
         async def perform_swipe():
-            """Performs a swipe gesture from bottom to top (scrolling up)"""
-            # Get screen size
+            """Performs a swipe gesture from bottom to top"""
             size_cmd = 'wm size'
             result = adb_pool.execute_command(device_id, ["adb", "shell", size_cmd])
             
-            # Parse dimensions
-            width, height = 1080, 1920  # Default fallback (original function values)
+            width, height = 1080, 1920
             override_match = re.search(r'Override size:\s*(\d+)x(\d+)', result.stdout)
             if override_match:
                 width, height = map(int, override_match.groups())
@@ -1318,20 +1352,17 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                 if physical_match:
                     width, height = map(int, physical_match.groups())
             
-            # Calculate swipe coordinates (original function coordinates)
             start_x = int(width * 0.5)
             start_y = int(height * 0.70)
             end_x = int(width * 0.5)
             end_y = 1
             
-            # Execute swipe
             swipe_cmd = f'input swipe {start_x} {start_y} {end_x} {end_y} 500'
             adb_pool.execute_command(device_id, ["adb", "shell", swipe_cmd])
             print(f"Performed swipe from ({start_x},{start_y}) to ({end_x},{end_y})")
-            wait_time=1
+            await asyncio.sleep(3)
             return True
             
-        # Function to check if apps are running
         async def check_apps_running():
             """Checks if both apps are running"""
             check_cmd = 'pidof com.nianticlabs.pokemongo; echo "---SEPARATOR---"; pidof com.github.furtif.furtifformaps'
@@ -1343,7 +1374,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
             
             return pogo_running and mitm_running
         
-        # Execute login sequence with improved error handling
+        # Execute login sequence
         for retry in range(max_retries):
             print(f"Login sequence attempt {retry+1}/{max_retries} for {device_id}")
             
@@ -1351,59 +1382,33 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
             discord_login_success = await find_and_tap_element(["Discord Login"])
             
             if discord_login_success:
-                # Wait longer for Discord page to fully load
                 print("Waiting for Discord authorization page to load...")
-                await asyncio.sleep(15)  # Increased from 10 to 15 seconds
+                await asyncio.sleep(30)
                 
-                # Step 2: Check if "Keep Scrolling..." button exists (with more attempts)
-                print("Checking for 'Keep Scrolling...' button...")
-                scroll_text = ["Keep Scrolling...", "Keep Scrolling"]
-                keep_scrolling_exists = await find_and_tap_element(
-                    scroll_text, 
-                    partial_match=True, 
-                    just_check=True, 
-                    max_attempts=5,  # Increased from 2 to 5
-                    wait_time=3       # Wait 3 seconds between attempts
-                )
+                # Step 2: Check if we're in a WebView
+                await find_and_tap_element(["dummy"], max_attempts=3)  # Just to update webview_bounds
                 
-                # Step 3: If Keep Scrolling exists, we need to scroll until Authorize appears
-                if keep_scrolling_exists:
-                    print("'Keep Scrolling...' button found, need to scroll to reveal Authorize button")
+                if webview_bounds:
+                    print("WebView detected, using coordinate-based approach for Authorize button")
                     
-                    # Try scrolling up to 3 times (increased from 2)
-                    for scroll_attempt in range(3):
+                    # First try scrolling if Keep Scrolling exists
+                    if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=2):
+                        print("Keep Scrolling button found, scrolling first...")
                         await perform_swipe()
                         await asyncio.sleep(3)
-                        
-                        # Check if Authorize button is now available
-                        authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                        authorize_success = await find_and_tap_element(
-                            authorize_text, 
-                            max_attempts=3,  # Give it more attempts
-                            partial_match=True,
-                            wait_time=2
-                        )
-                        
-                        if authorize_success:
-                            print(f"Authorize button appeared and clicked after {scroll_attempt + 1} scroll(s)")
-                            break
-                        else:
-                            print(f"Authorize button not yet available after scroll {scroll_attempt + 1}")
-                            if scroll_attempt < 2:  # Don't wait after last scroll attempt
-                                await asyncio.sleep(2)
+                        await perform_swipe()
+                        await asyncio.sleep(3)
+                    
+                    # Now tap the Authorize button position
+                    authorize_success = await tap_webview_authorize()
                 else:
-                    # If no Keep Scrolling button, try to find Authorize directly
-                    print("No 'Keep Scrolling...' button found, looking for Authorize button directly")
+                    # Try standard detection
+                    print("No WebView detected, trying standard button detection")
                     authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                    authorize_success = await find_and_tap_element(
-                        authorize_text, 
-                        max_attempts=3, 
-                        partial_match=True,
-                        wait_time=2
-                    )
+                    authorize_success = await find_and_tap_element(authorize_text, max_attempts=5, partial_match=True)
                 
-                # Continue with the rest of the flow if Authorize was clicked
-                if 'authorize_success' in locals() and authorize_success:
+                # Step 3: Continue with rest of flow if authorized
+                if authorize_success or webview_bounds:  # Give it a chance even if tap didn't confirm success
                     await asyncio.sleep(3)
                     
                     # Step 4: Recheck Service Status
@@ -1424,19 +1429,16 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
                                 print(f"Login sequence completed successfully on {device_id}")
                                 return True
             
-            # If we get here, retry is needed
+            # Retry if needed
             if retry < max_retries - 1:
                 print(f"Login sequence failed, retrying {retry+2}/{max_retries}...")
                 
-                # Restart app for next attempt
                 stop_cmd = "am force-stop com.github.furtif.furtifformaps"
                 adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
-                
                 await asyncio.sleep(2)
                 
                 start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
                 adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
-                
                 await asyncio.sleep(5)
         
         print(f"Login sequence failed after {max_retries} attempts")
@@ -1446,7 +1448,6 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
         print(f"Error in optimized login sequence for {device_id}: {str(e)}")
         return False
     finally:
-        # Clean up
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 # APK Management with UnownHash Mirror
