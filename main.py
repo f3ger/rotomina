@@ -1306,53 +1306,64 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3) -> bool
         for retry in range(max_retries):
             print(f"Login sequence attempt {retry+1}/{max_retries} for {device_id}")
 
-            # Step 1: Click Discord Login
-            discord_login_success = await find_and_tap_element(["Discord Login"])
+            # Step 1: Check if Discord Login button is present
+            discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
 
-            if discord_login_success:
-                print("Waiting for Discord authorization page to load...")
-                await asyncio.sleep(35)
+            if discord_login_present:
+                # Token missing - perform full Discord login
+                print("Discord Login button found - performing Discord authorization...")
+                discord_login_success = await find_and_tap_element(["Discord Login"])
 
-                # Step 2: Ensure WebView loaded
-                await find_and_tap_element(["dummy"], max_attempts=2)
+                if discord_login_success:
+                    print("Waiting for Discord authorization page to load...")
+                    await asyncio.sleep(35)
 
-                if webview_bounds:
-                    # Step 3: Handle Keep Scrolling
-                    if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=5):
-                        await perform_swipe()
+                    # Step 2: Ensure WebView loaded
+                    await find_and_tap_element(["dummy"], max_attempts=2)
+
+                    if webview_bounds:
+                        # Step 3: Handle Keep Scrolling
+                        if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=5):
+                            await perform_swipe()
+                            await asyncio.sleep(3)
+                            await perform_swipe()
+                            await asyncio.sleep(3)
+
+                        # Step 4: Retry logic for Authorize button
+                        authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
+                        wait_times = [1, 3, 5, 5, 5]
+                        authorize_success = False
+
+                        for wait_time in wait_times:
+                            authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
+                            if authorize_success:
+                                break
+                            print(f"Authorize button not found, waiting {wait_time}s before retry...")
+                            await asyncio.sleep(wait_time)
+
+                        if not authorize_success:
+                            print("Failed to click Authorize button")
+                            continue
+
                         await asyncio.sleep(3)
-                        await perform_swipe()
-                        await asyncio.sleep(3)
+            else:
+                # Token already saved - skip Discord login
+                print("Discord Login button not found - token already saved, proceeding directly...")
 
-                    # Step 4: Retry logic for Authorize button
-                    authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                    wait_times = [1, 3, 5, 5, 5]
-                    authorize_success = False
+            # Step 5: Continue with Recheck Service Status (for both cases)
+            recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
 
-                    for wait_time in wait_times:
-                        authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
-                        if authorize_success:
-                            break
-                        print(f"Authorize button not found, waiting {wait_time}s before retry...")
-                        await asyncio.sleep(wait_time)
+            if recheck_success:
+                await asyncio.sleep(2)
+                start_success = await find_and_tap_element(["Start service"], max_attempts=3)
 
-                    # Step 5: Continue flow if authorized
-                    if authorize_success:
-                        await asyncio.sleep(3)
+                if start_success:
+                    print(f"Clicked all buttons, waiting for apps to initialize...")
+                    await asyncio.sleep(30)
 
-                        recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
-
-                        if recheck_success:
-                            await asyncio.sleep(2)
-                            start_success = await find_and_tap_element(["Start service"], max_attempts=3)
-
-                            if start_success:
-                                print(f"Clicked all buttons, waiting for apps to initialize...")
-                                await asyncio.sleep(30)
-
-                                if await check_apps_running():
-                                    print(f"Login sequence completed successfully on {device_id}")
-                                    return True
+                    if await check_apps_running():
+                        print(f"Login sequence completed successfully on {device_id}")
+                        return True
 
             if retry < max_retries - 1:
                 print(f"Login sequence failed, retrying {retry+2}/{max_retries}...")
