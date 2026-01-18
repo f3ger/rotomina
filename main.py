@@ -855,11 +855,16 @@ def get_device_details(device_id: str) -> dict:
     """
     Optimized version of get_device_details that uses VersionManager
     to minimize ADB calls for version information.
-    Also reads and stores Furtif/Map World config settings.
+    
+    Furtif config handling:
+    - If no furtif_config stored yet: Read once from device and save
+    - If furtif_config already stored: Use stored config (no device read)
+    - Fresh config is read on every app start in optimized_app_start()
     """
     try:
         config_data = load_config()
         device = next((d for d in config_data["devices"] if d["ip"] == device_id), None)
+        is_new_device = device is None
 
         if not device:
             if ":" in device_id:
@@ -872,23 +877,32 @@ def get_device_details(device_id: str) -> dict:
             save_config(config_data)
 
         details = {
-            "display_name": device["display_name"],
+            "display_name": device.get("display_name", device_id),
             "pogo_version": "N/A",
             "mitm_version": "N/A",
             "module_version": "N/A"
         }
 
-        # Read Furtif config from device (includes RotomDeviceName and all settings)
-        furtif_config = read_device_furtif_config(device_id)
+        # Check if furtif_config is already stored
+        stored_furtif_config = device.get("furtif_config", {})
         
-        # Update display_name from Furtif config if available
-        if furtif_config:
-            new_name = furtif_config.get("RotomDeviceName", "").strip()
-            if new_name and new_name != device["display_name"]:
-                print(f"Device {device_id} name changed from '{device['display_name']}' to '{new_name}', updating config.json")
-                device["display_name"] = new_name
-                save_config(config_data)
-            details["display_name"] = device["display_name"]
+        # If new device or no stored config yet, read from device once
+        if is_new_device or not stored_furtif_config:
+            print(f"Reading Furtif config for {device_id} (first time or missing)...")
+            furtif_config = read_device_furtif_config(device_id)
+            if furtif_config:
+                stored_furtif_config = furtif_config
+                # Update display_name from fresh config
+                new_name = furtif_config.get("RotomDeviceName", "").strip()
+                if new_name:
+                    device["display_name"] = new_name
+                    details["display_name"] = new_name
+        else:
+            # Use stored config, update display_name if needed
+            stored_name = stored_furtif_config.get("RotomDeviceName", "").strip()
+            if stored_name and stored_name != device.get("display_name"):
+                device["display_name"] = stored_name
+                details["display_name"] = stored_name
 
         # Get version info from VersionManager
         version_info = version_manager.get_version_info(device_id)
@@ -897,13 +911,13 @@ def get_device_details(device_id: str) -> dict:
             details["mitm_version"] = version_info.get("mitm_version", "N/A")
             details["module_version"] = version_info.get("module_version", "N/A")
 
-        # Save details and furtif_config to config.json
-        update_device_info(device_id, details, furtif_config if furtif_config else None)
+        # Save details and furtif_config (if we read a new one)
+        update_device_info(device_id, details, stored_furtif_config if stored_furtif_config else None)
         return details
     except Exception as e:
         print(f"Device detail error {device_id}: {str(e)}")
         return {
-            "display_name": device.get("display_name", device_id.split(":")[0] if ":" in device_id else device_id),
+            "display_name": device.get("display_name", device_id.split(":")[0] if ":" in device_id else device_id) if device else device_id,
             "pogo_version": "N/A",
             "mitm_version": "N/A",
             "module_version": "N/A"
