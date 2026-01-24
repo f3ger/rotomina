@@ -505,10 +505,35 @@ version_manager = VersionManager()
 
 # Configuration Management
 def save_config(config):
-    """Saves the configuration to config.json."""
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4)
-        f.flush()
+    """
+    Saves the configuration to config.json.
+    Creates a backup before writing to prevent data loss.
+    """
+    try:
+        # Create backup if config file exists
+        if CONFIG_FILE.exists():
+            backup_file = CONFIG_FILE.with_suffix('.json.bak')
+            try:
+                shutil.copy2(CONFIG_FILE, backup_file)
+            except Exception as e:
+                print(f"Warning: Could not create config backup: {e}")
+        
+        # Write new config
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+            f.flush()
+            
+    except Exception as e:
+        print(f"Error saving config: {e}")
+        # Try to restore from backup
+        backup_file = CONFIG_FILE.with_suffix('.json.bak')
+        if backup_file.exists():
+            print("Attempting to restore config from backup...")
+            try:
+                shutil.copy2(backup_file, CONFIG_FILE)
+                print("Config restored from backup")
+            except Exception as restore_error:
+                print(f"Failed to restore config: {restore_error}")
 
 def load_config():
     """
@@ -824,7 +849,29 @@ def read_device_furtif_config(device_id: str) -> dict:
         
         if result.returncode == 0 and result.stdout:
             try:
-                device_config = json.loads(result.stdout)
+                # Clean the output - extract only the JSON part
+                raw_output = result.stdout.strip()
+                
+                # Find the JSON object boundaries
+                json_start = raw_output.find('{')
+                json_end = raw_output.rfind('}')
+                
+                if json_start == -1 or json_end == -1 or json_end <= json_start:
+                    print(f"Device {device_id}: No valid JSON found in Furtif config output")
+                    return furtif_config
+                
+                # Extract only the JSON part
+                json_str = raw_output[json_start:json_end + 1]
+                
+                # Remove any control characters that might break JSON parsing
+                json_str = ''.join(char for char in json_str if ord(char) >= 32 or char in '\n\r\t')
+                
+                device_config = json.loads(json_str)
+                
+                # Validate that we got a dict
+                if not isinstance(device_config, dict):
+                    print(f"Device {device_id}: Furtif config is not a valid dictionary")
+                    return furtif_config
                 
                 # Extract all Rotom* settings
                 for key, value in device_config.items():
@@ -840,6 +887,8 @@ def read_device_furtif_config(device_id: str) -> dict:
                 
             except json.JSONDecodeError as e:
                 print(f"Device {device_id}: Failed to parse Furtif config.json: {e}")
+            except Exception as e:
+                print(f"Device {device_id}: Error processing Furtif config: {e}")
         else:
             print(f"Device {device_id}: Could not read Furtif config.json (returncode={result.returncode})")
             
@@ -1420,24 +1469,129 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
 
             return pogo_running and mitm_running
 
+        async def perform_discord_login():
+            """
+            Performs the full Discord login procedure.
+            Returns True if successful, False otherwise.
+            """
+            nonlocal webview_bounds
+            
+            print("Performing Discord authorization...")
+            discord_login_success = await find_and_tap_element(["Discord Login"])
+
+            if not discord_login_success:
+                print("Failed to click Discord Login button")
+                return False
+                
+            print("Waiting for Discord authorization page to load...")
+            await asyncio.sleep(35)
+
+            # Ensure WebView loaded
+            await find_and_tap_element(["dummy"], max_attempts=2)
+
+            if webview_bounds:
+                # Handle Keep Scrolling
+                if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=5):
+                    await perform_swipe()
+                    await asyncio.sleep(3)
+                    await perform_swipe()
+                    await asyncio.sleep(3)
+
+                # Retry logic for Authorize button
+                authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
+                wait_times = [1, 3, 5, 5, 5]
+                authorize_success = False
+
+                for wait_time in wait_times:
+                    authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
+                    if authorize_success:
+                        break
+                    print(f"Authorize button not found, waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+
+                if not authorize_success:
+                    print("Failed to click Authorize button")
+                    return False
+
+                await asyncio.sleep(3)
+                return True
+            
+            return False
+
+        async def refresh_and_save_furtif_config():
+            """
+            Reads fresh config from device and saves it.
+            Called after successful Discord login to update the token.
+            """
+            print(f"Refreshing Furtif config from device after Discord login...")
+            new_config = read_device_furtif_config(device_id)
+            if new_config:
+                # Get current device info
+                config = load_config()
+                device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
+                if device:
+                    update_device_info(device_id, {
+                        "display_name": device.get("display_name", device_id),
+                        "pogo_version": device.get("pogo_version", "N/A"),
+                        "mitm_version": device.get("mitm_version", "N/A"),
+                        "module_version": device.get("module_version", "N/A")
+                    }, new_config)
+                    print(f"Furtif config updated with new Discord token for {device_id}")
+                return new_config
+            return None
+
         # === AUTOSTART MODE: DiscordData present + RotomTryAutoStart=true ===
         if discord_data_present and autostart_enabled:
-            print(f"Autostart mode enabled for {device_id} - no UI interaction needed")
+            print(f"Autostart mode enabled for {device_id} - waiting for automatic startup...")
             
-            # Just wait for the app to auto-start everything and verify apps are running
             for retry in range(max_retries):
                 print(f"Autostart verification attempt {retry+1}/{max_retries} for {device_id}")
                 
                 # Wait for autostart to complete
                 await asyncio.sleep(30)
                 
+                # Check if apps are running
                 if await check_apps_running():
                     print(f"Autostart completed successfully on {device_id} - both apps running")
                     return True
                 
-                if retry < max_retries - 1:
-                    print(f"Apps not running yet, waiting longer...")
-                    await asyncio.sleep(15)
+                # Apps not running - check if Discord Login button is visible (token expired?)
+                print(f"Apps not running on {device_id}, checking for Discord Login button...")
+                discord_login_visible = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
+                
+                if discord_login_visible:
+                    print(f"Discord Login button found on {device_id} - token expired! Starting login procedure...")
+                    
+                    # Perform Discord login
+                    login_success = await perform_discord_login()
+                    
+                    if login_success:
+                        # Wait for Discord to process and app to save new token
+                        await asyncio.sleep(5)
+                        
+                        # Refresh and save the new config (with new DiscordData)
+                        await refresh_and_save_furtif_config()
+                        
+                        # Now continue with Recheck Service Status -> Start service
+                        # (because after fresh login, autostart won't trigger automatically)
+                        recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
+                        if recheck_success:
+                            await asyncio.sleep(2)
+                            start_success = await find_and_tap_element(["Start service"], max_attempts=3)
+                            if start_success:
+                                print(f"Clicked Start service after Discord login, waiting for apps...")
+                                await asyncio.sleep(30)
+                                
+                                if await check_apps_running():
+                                    print(f"Login sequence completed successfully on {device_id} after token refresh")
+                                    return True
+                    else:
+                        print(f"Discord login failed on {device_id}")
+                else:
+                    # No Discord Login button - maybe just slow, wait more
+                    if retry < max_retries - 1:
+                        print(f"No Discord Login button visible, waiting longer...")
+                        await asyncio.sleep(15)
             
             print(f"Autostart verification failed after {max_retries} attempts on {device_id}")
             return False
@@ -1455,40 +1609,14 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                 if discord_login_present:
                     # Token missing - perform full Discord login
                     print("Discord Login button found - performing Discord authorization...")
-                    discord_login_success = await find_and_tap_element(["Discord Login"])
-
-                    if discord_login_success:
-                        print("Waiting for Discord authorization page to load...")
-                        await asyncio.sleep(35)
-
-                        # Step 2: Ensure WebView loaded
-                        await find_and_tap_element(["dummy"], max_attempts=2)
-
-                        if webview_bounds:
-                            # Step 3: Handle Keep Scrolling
-                            if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=5):
-                                await perform_swipe()
-                                await asyncio.sleep(3)
-                                await perform_swipe()
-                                await asyncio.sleep(3)
-
-                            # Step 4: Retry logic for Authorize button
-                            authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                            wait_times = [1, 3, 5, 5, 5]
-                            authorize_success = False
-
-                            for wait_time in wait_times:
-                                authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
-                                if authorize_success:
-                                    break
-                                print(f"Authorize button not found, waiting {wait_time}s before retry...")
-                                await asyncio.sleep(wait_time)
-
-                            if not authorize_success:
-                                print("Failed to click Authorize button")
-                                continue
-
-                            await asyncio.sleep(3)
+                    
+                    login_success = await perform_discord_login()
+                    
+                    if login_success:
+                        # Refresh and save the new config
+                        await refresh_and_save_furtif_config()
+                    else:
+                        continue
                 else:
                     # Token already saved - skip Discord login
                     print("Discord Login button not found - token already saved, proceeding directly...")
