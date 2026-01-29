@@ -413,11 +413,11 @@ class VersionManager:
     
 def get_devices_needing_module_update(self, latest_version, module_type="fork"):
         """
-        Finds devices needing a module update
+        Finds devices needing a PlayIntegrityFork module update
         
         Args:
             latest_version: The latest available module version
-            module_type: The module type ("fork" or "fix")
+            module_type: Deprecated, always uses "fork"
             
         Returns:
             list: List of device IDs needing update
@@ -425,7 +425,7 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
         config = load_config()
         devices_to_update = []
         
-        print(f"Checking {len(config.get('devices', []))} devices in config for module updates")
+        print(f"Checking {len(config.get('devices', []))} devices in config for FORK module updates")
         
         # Get a set of device IPs from the config for faster lookup
         config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
@@ -453,25 +453,20 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
                 
             installed_module = version_info.get("module_version", "N/A").strip()
             
-            # Determine module type and version
+            # Skip devices without any module installed
             if installed_module == "N/A":
-                print(f"No Play Integrity module found on {device_id}, will install module")
-                devices_to_update.append(device_id)
+                print(f"No PlayIntegrity module found on {device_id}, skipping")
                 continue
                 
             module_is_fork = "Fork" in installed_module
             
-            # Check if module type needs to be switched
-            if (module_type == "fix" and module_is_fork) or (module_type == "fork" and not module_is_fork):
-                print(f"Device {device_id} has different module type than preferred, updating to {module_type.upper()}")
-                devices_to_update.append(device_id)
+            # Skip devices with Fix module - only update Fork devices
+            if not module_is_fork:
+                print(f"Device {device_id} has Fix module, skipping (only Fork devices are updated)")
                 continue
             
             # Extract current version
-            if module_is_fork:
-                version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
-            else:
-                version_match = re.search(r'Fix\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
+            version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
                 
             if version_match:
                 current_version = version_match.group(1)
@@ -493,7 +488,7 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
                 print(f"Could not parse version from {installed_module} on {device_id}, scheduling update")
                 devices_to_update.append(device_id)
                 
-        print(f"Found {len(devices_to_update)} devices that need {module_type.upper()} module update")
+        print(f"Found {len(devices_to_update)} devices that need FORK module update")
         
         # Final verification that all devices to update are in the config
         devices_to_update = [dev for dev in devices_to_update if dev in config_device_ips]
@@ -677,7 +672,7 @@ class TimeoutConfig:
 # Helper functions for specific notifications
 async def notify_device_offline(device_name: str, ip: str):
     """Notifies when a device goes offline"""
-    message = f"⚠️ Device **{device_name}** ({ip}) is offline."
+    message = f"âš ï¸ Device **{device_name}** ({ip}) is offline."
     await send_discord_notification(
         message=message,
         title="Device Offline",
@@ -686,7 +681,7 @@ async def notify_device_offline(device_name: str, ip: str):
 
 async def notify_device_online(device_name: str, ip: str):
     """Notifies when a device comes back online"""
-    message = f"✅ Device **{device_name}** ({ip}) is back online and MITM was successfully started."
+    message = f"âœ… Device **{device_name}** ({ip}) is back online and MITM was successfully started."
     await send_discord_notification(
         message=message,
         title="Device Online",
@@ -700,7 +695,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
     
     threshold_formatted = f"{threshold} MB"
     
-    message = (f"🔄 Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
+    message = (f"ðŸ”„ Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
               f"Available memory: **{memory_formatted}** (Threshold: {threshold_formatted})")
     
     await send_discord_notification(
@@ -711,7 +706,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     """Notifies when an update has been installed on a device"""
-    message = f"📲 **{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
+    message = f"ðŸ“² **{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
     
     await send_discord_notification(
         message=message,
@@ -721,7 +716,7 @@ async def notify_update_installed(device_name: str, ip: str, update_type: str, v
 
 async def notify_update_downloaded(update_type: str, version: str):
     """Notifies when an update has been downloaded"""
-    message = f"💾 New **{update_type}** version {version} has been downloaded and is ready for installation."
+    message = f"ðŸ’¾ New **{update_type}** version {version} has been downloaded and is ready for installation."
     
     await send_discord_notification(
         message=message,
@@ -1083,150 +1078,6 @@ def sync_system_adb_key():
         return False
 
 # Optimized ADB Authorization
-def streamlined_adb_authorization(device_id: str) -> bool:
-    """
-    Streamlined approach to ADB authorization using a single script
-    rather than multiple separate approaches.
-    
-    Args:
-        device_id: Device identifier
-        
-    Returns:
-        bool: True if keys were installed, False otherwise
-    """
-    try:
-        # Generate a single ADB key and store it to a temporary file
-        adb_key = ensure_adb_keys()
-        if not adb_key:
-            print(f"Failed to generate ADB key for {device_id}")
-            return False
-            
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp:
-            temp_path = temp.name
-            temp.write(adb_key)
-            temp.flush()
-        
-        # Push the key file to device
-        connected = adb_pool.ensure_connected(device_id)
-        if not connected:
-            print(f"Cannot connect to device {device_id} for authorization")
-            os.unlink(temp_path)
-            return False
-            
-        adb_pool.execute_command(
-            device_id,
-            ["adb", "push", temp_path, "/sdcard/adbkey.pub"]
-        )
-        
-        # Create a comprehensive installation script that tries all methods at once
-        installation_script = """
-        set -e
-        
-        # Check for root
-        if ! su -c 'id' | grep -q 'uid=0'; then
-            echo "No root access"
-            exit 1
-        fi
-        
-        # Enable permissive mode for installation
-        su -c 'setenforce 0' || true
-        
-        # Ensure required directories exist
-        su -c 'mkdir -p /data/misc/adb'
-        su -c 'mkdir -p /data/data/com.android.adb'
-        su -c 'mkdir -p /data/adb'
-        
-        # Fix any immutable attributes
-        su -c 'chattr -i /data/misc/adb/adb_keys 2>/dev/null' || true
-        
-        # Try multiple install locations at once
-        for LOCATION in /data/misc/adb/adb_keys /data/data/com.android.adb/adb_keys /data/adb/adb_keys; do
-            DIR=$(dirname "$LOCATION")
-            su -c "mkdir -p $DIR"
-            su -c "cat /sdcard/adbkey.pub > $LOCATION"
-            su -c "chmod 644 $LOCATION"
-            su -c "chown system:system $LOCATION" || true
-        done
-        
-        # Enable ADB settings
-        su -c 'settings put global adb_enabled 1'
-        su -c 'development_settings_enabled 1' || true
-        
-        # Configure TCP mode
-        su -c 'setprop service.adb.tcp.port 5555'
-        
-        # Restart ADB daemon
-        su -c 'stop adbd' || true
-        su -c 'start adbd' || true
-        
-        # Clean up
-        rm -f /sdcard/adbkey.pub
-        
-        # Return to enforcing mode
-        su -c 'setenforce 1' || true
-        
-        echo "INSTALL_SUCCESS"
-        """
-        
-        # Save script to device and execute it
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.sh') as script_file:
-            script_path = script_file.name
-            script_file.write(installation_script)
-            script_file.flush()
-            script_file.close()
-            
-            # Push script to device
-            adb_pool.execute_command(
-                device_id,
-                ["adb", "push", script_path, "/data/local/tmp/install_adb_keys.sh"]
-            )
-            
-            # Set executable
-            adb_pool.execute_command(
-                device_id,
-                ["adb", "shell", "chmod 755 /data/local/tmp/install_adb_keys.sh"]
-            )
-            
-            # Execute script
-            result = adb_pool.execute_command(
-                device_id,
-                ["adb", "shell", "su -c 'sh /data/local/tmp/install_adb_keys.sh'"]
-            )
-            
-            # Clean up
-            os.unlink(script_path)
-            adb_pool.execute_command(
-                device_id,
-                ["adb", "shell", "rm -f /data/local/tmp/install_adb_keys.sh"]
-            )
-            
-            # Check result
-            if "INSTALL_SUCCESS" in result.stdout:
-                print(f"ADB keys successfully installed on {device_id}")
-                
-                # Test connection
-                adb_pool.execute_command(device_id, ["adb", "disconnect", device_id])
-                time.sleep(2)
-                reconnect_result = adb_pool.execute_command(
-                    device_id, 
-                    ["adb", "connect", device_id]
-                )
-                
-                if "connected to" in reconnect_result.stdout and "unauthorized" not in reconnect_result.stdout:
-                    print(f"Successfully reconnected to {device_id} without authorization prompt")
-                    return True
-                    
-                print(f"Connection test passed but reconnection message was: {reconnect_result.stdout}")
-                return True
-            else:
-                print(f"Installation failed. Output: {result.stdout}")
-                return False
-            
-    except Exception as e:
-        print(f"Error in streamlined ADB authorization for {device_id}: {str(e)}")
-        traceback.print_exc()
-        return False
-
 # Optimized App Start and Login Sequence
 async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
     """
@@ -1987,7 +1838,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if recovery_action:
                 if strategy_name == "cache_clear":
                     await send_discord_notification(
-                        message=f"⚠️ Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
+                        message=f"âš ï¸ Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
                         title="Installation Retry - Clearing Cache",
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -1996,7 +1847,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     update_progress(40)
                 elif strategy_name == "uninstall_reinstall":
                     await send_discord_notification(
-                        message=f"⚠️ Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
+                        message=f"âš ï¸ Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
                         title="Installation Retry - Uninstalling", 
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -2023,7 +1874,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Handle final failure
         if not installation_success:
             await send_discord_notification(
-                message=f"❌ All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
+                message=f"âŒ All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
                 title="Installation Failed",
                 color=DISCORD_COLOR_RED
             )
@@ -2050,7 +1901,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             else:
                 print(f"Failed to start app on {device_ip} after update")
                 await send_discord_notification(
-                    message=f"⚠️ Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
+                    message=f"âš ï¸ Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
                     title="Installation OK, Startup Failed",
                     color=DISCORD_COLOR_ORANGE
                 )
@@ -2081,7 +1932,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             device_details = get_device_details(device_ip)
             device_name = device_details.get("display_name", device_ip.split(":")[0])
             await send_discord_notification(
-                message=f"❌ Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
+                message=f"âŒ Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
                 title="Update Failed - Exception",
                 color=DISCORD_COLOR_RED
             )
@@ -2101,19 +1952,19 @@ async def optimized_pogo_update_task():
         try:
             config = load_config()
             
-            print("🔍 Checking for PoGO updates...")
+            print("ðŸ” Checking for PoGO updates...")
             
             # Get versions and download latest version
             get_available_versions.cache_clear()
             versions = get_available_versions()
             
             if not versions.get("latest"):
-                print("❌ No valid PoGO version available, skipping check.")
+                print("âŒ No valid PoGO version available, skipping check.")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions["latest"]["version"]
-            print(f"📌 Latest available PoGO version: {latest_version}")
+            print(f"ðŸ“Œ Latest available PoGO version: {latest_version}")
             
             # Always download latest version
             ensure_latest_apk_downloaded()
@@ -2140,7 +1991,7 @@ async def optimized_pogo_update_task():
             
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"🚀 Installing PoGO version {latest_version} on {update_count} devices that need updates")
+                print(f"ðŸš€ Installing PoGO version {latest_version} on {update_count} devices that need updates")
                 
                 # Process each device
                 for device_id in devices_to_update:
@@ -2148,15 +1999,15 @@ async def optimized_pogo_update_task():
                     # Mark device for version refresh
                     version_manager.mark_for_refresh(device_id)
                 
-                print("✅ PoGO automatic update complete")
+                print("âœ… PoGO automatic update complete")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("✅ All devices already have the latest version. No updates needed.")
+                print("âœ… All devices already have the latest version. No updates needed.")
             
         except Exception as e:
-            print(f"❌ PoGO Auto-Update Error: {str(e)}")
+            print(f"âŒ PoGO Auto-Update Error: {str(e)}")
             import traceback
             traceback.print_exc()
             
@@ -2756,7 +2607,7 @@ class MapWorldUpdater:
             comparison = self.compare_versions(installed_version, new_version)
             
             if comparison < 0:
-                return True, f"Update available: {installed_version} → {new_version}"
+                return True, f"Update available: {installed_version} â†’ {new_version}"
             elif comparison == 0:
                 return False, f"Same version already installed: {installed_version}"
             else:
@@ -3098,7 +2949,7 @@ async def check_all_device_versions() -> Dict:
                 )
                 if comparison < 0:
                     device_result["update_available"] = True
-                    device_result["update_info"] = f"{device_result['installed_version']} → {available_version}"
+                    device_result["update_info"] = f"{device_result['installed_version']} â†’ {available_version}"
                 elif comparison == 0:
                     device_result["update_available"] = False
                     device_result["update_info"] = "Up to date"
@@ -3236,7 +3087,7 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} → {new_filename}")
+        logger.info(f"Renamed {current_filename} â†’ {new_filename}")
         
         return True
         
@@ -3309,7 +3160,7 @@ def quick_fix_version() -> bool:
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} → {new_filename}")
+        logger.info(f"Fixed version: {current_apk.name} â†’ {new_filename}")
         return True
         
     except Exception as e:
@@ -3382,21 +3233,7 @@ def list_mapworld_versions() -> None:
             
 # PIF Version Management Functions
 PIF_MODULE_DIR = BASE_DIR / "data" / "modules" / "playintegrityfork"
-PIFIX_MODULE_DIR = BASE_DIR / "data" / "modules" / "playintegrityfix"
 PIF_GITHUB_API = "https://api.github.com/repos/osm0sis/PlayIntegrityFork/releases?per_page=10"
-PIFIX_GITHUB_API = "https://api.github.com/repos/andi2022/PlayIntegrityFix/releases?per_page=10"
-
-def get_preferred_module_type():
-    """Gets the user's preferred module type from config"""
-    config = load_config()
-    return config.get("preferred_module_type", "fork")
-
-def save_module_preference(module_type):
-    """Saves the preferred module type to config"""
-    config = load_config()
-    config["preferred_module_type"] = module_type
-    save_config(config)
-    return config
 
 # GitHub API cache for module versions
 github_api_cache = {}
@@ -3409,22 +3246,19 @@ def clear_github_api_cache():
     print("GitHub API cache cleared")
 
 async def fetch_available_module_versions(module_type="fork"):
-    """Fetches available module versions from GitHub API with caching to reduce rate limiting"""
+    """Fetches available PlayIntegrityFork versions from GitHub API with caching"""
     # Check cache first
-    cache_key = f"module_versions_{module_type}"
+    cache_key = "module_versions_fork"
     current_time = time.time()
     
     if cache_key in github_api_cache:
         cached_data, timestamp = github_api_cache[cache_key]
         if current_time - timestamp < GITHUB_CACHE_TTL:
-            print(f"Using cached {module_type.upper()} versions (cached {int((current_time - timestamp)/60)} minutes ago)")
+            print(f"Using cached FORK versions (cached {int((current_time - timestamp)/60)} minutes ago)")
             return cached_data
-    if module_type == "fix":
-        api_url = PIFIX_GITHUB_API
-        module_dir = PIFIX_MODULE_DIR
-    else:
-        api_url = PIF_GITHUB_API
-        module_dir = PIF_MODULE_DIR
+    
+    api_url = PIF_GITHUB_API
+    module_dir = PIF_MODULE_DIR
     
     module_dir.mkdir(parents=True, exist_ok=True)
     
@@ -3547,25 +3381,20 @@ async def fetch_available_pif_versions():
     return await fetch_available_module_versions("fork")
 
 async def download_module_version(version_info):
-    """Downloads a module version and saves it with the original filename"""
+    """Downloads a PlayIntegrityFork version and saves it with the original filename"""
     try:
         version = version_info["version"]
         download_url = version_info["download_url"]
         filename = version_info["filename"]
-        module_type = version_info.get("module_type", "fork")
         
-        if module_type == "fix":
-            module_dir = PIFIX_MODULE_DIR
-        else:
-            module_dir = PIF_MODULE_DIR
-            
+        module_dir = PIF_MODULE_DIR
         module_path = module_dir / filename
         
         if module_path.exists():
-            print(f"{module_type.upper()} version {version} already downloaded at {module_path}")
+            print(f"FORK version {version} already downloaded at {module_path}")
             return module_path
         
-        print(f"Downloading {module_type.upper()} version {version} from {download_url}")
+        print(f"Downloading FORK version {version} from {download_url}")
         async with httpx.AsyncClient(follow_redirects=True) as client:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -3583,13 +3412,8 @@ async def download_module_version(version_info):
             if "html" in content_type:
                 print(f"GitHub returned HTML instead of ZIP file. Using alternative download method...")
                 
-                if module_type == "fix":
-                    direct_url = download_url.replace("/api.github.com/repos/", "/github.com/")
-                    direct_url = direct_url.replace("/releases/assets/", "/releases/download/v")
-                else:
-                    direct_url = download_url.replace("/api.github.com/repos/", "/github.com/")
-                    direct_url = direct_url.replace("/releases/assets/", "/releases/download/v")
-                
+                direct_url = download_url.replace("/api.github.com/repos/", "/github.com/")
+                direct_url = direct_url.replace("/releases/assets/", "/releases/download/v")
                 direct_url = direct_url.replace("/download/v", "/download/v" + version + "/")
                 
                 print(f"Trying alternative URL: {direct_url}")
@@ -3614,44 +3438,32 @@ async def download_module_version(version_info):
                 module_path.unlink()
                 return None
         
-        print(f"Successfully downloaded {module_type.upper()} version {version} to {module_path}")
+        print(f"Successfully downloaded FORK version {version} to {module_path}")
         return module_path
         
     except Exception as e:
-        print(f"Error downloading {version_info.get('module_type', 'fork').upper()} version {version}: {str(e)}")
+        print(f"Error downloading FORK version {version}: {str(e)}")
         traceback.print_exc()
         return None
 
 async def get_all_module_versions_for_ui():
-    """Returns combined module versions for UI display"""
+    """Returns PlayIntegrityFork versions for UI display"""
     fork_versions = await fetch_available_module_versions("fork")
-    fix_versions = await fetch_available_module_versions("fix")
     
     for version in fork_versions:
         version["name"] = f"PlayIntegrityFork {version['version']}"
-    for version in fix_versions:
-        version["name"] = f"PlayIntegrityFix {version['version']}"
-    
-    combined_versions = fork_versions + fix_versions
-    combined_versions.sort(key=lambda x: x["published_at"], reverse=True)
     
     return {
-        "all": combined_versions,
+        "all": fork_versions,
         "fork": fork_versions,
-        "fix": fix_versions,
-        "preferred": get_preferred_module_type()
+        "preferred": "fork"
     }
 
 async def get_pif_versions_for_ui():
     """
-    Compatibility function for code that uses get_pif_versions_for_ui.
-    Returns versions based on the preferred module type.
+    Returns PlayIntegrityFork versions for UI.
     """
-    config = load_config()
-    preferred_module = config.get("preferred_module_type", "fork")
-    
-    versions = await fetch_available_module_versions(preferred_module)
-    
+    versions = await fetch_available_module_versions("fork")
     versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
     return versions
 
@@ -3665,25 +3477,23 @@ async def install_pif_module(device_ip: str, pif_module_path=None):
 
 # Optimized Module Update Task
 async def optimized_module_update_task():
-    """Checks and installs module updates with reduced version queries"""
+    """Checks and installs PlayIntegrityFork updates with reduced version queries"""
     while True:
         try:
             config = load_config()
             
-            print("🔍 Checking for PlayIntegrity Module updates...")
+            print("Checking for PlayIntegrityFork updates...")
 
-            preferred_module = config.get("preferred_module_type", "fork")
-
-            versions = await fetch_available_module_versions(preferred_module)
+            versions = await fetch_available_module_versions("fork")
             if not versions:
-                print(f"❌ No valid {preferred_module.upper()} versions available, skipping check.")
+                print("No valid FORK versions available, skipping check.")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions[0]
             new_version = latest_version["version"]
 
-            print(f"📌 Latest {preferred_module.upper()} version available: {new_version}")
+            print(f"Latest FORK version available: {new_version}")
                 
             module_path = await download_module_version(latest_version)
             if not module_path:
@@ -3692,11 +3502,11 @@ async def optimized_module_update_task():
                 continue
 
             if not config.get("pif_auto_update_enabled", True):
-                print(f"{preferred_module.upper()} auto-update is disabled in configuration. Module downloaded but not installed.")
+                print("FORK auto-update is disabled in configuration. Module downloaded but not installed.")
                 await asyncio.sleep(3 * 3600)
                 continue
 
-            # Manual implementation to find devices needing update
+            # Find devices needing update
             devices_to_update = []
             config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
             
@@ -3716,24 +3526,20 @@ async def optimized_module_update_task():
                     
                 installed_module = version_info.get("module_version", "N/A").strip()
                 
-                # Determine if update needed
+                # Skip devices without any module installed
                 if installed_module == "N/A":
-                    print(f"No Play Integrity module found on {device_id}, will install module")
-                    devices_to_update.append(device_id)
+                    print(f"No PlayIntegrity module found on {device_id}, skipping")
                     continue
                     
                 module_is_fork = "Fork" in installed_module
                 
-                if (preferred_module == "fix" and module_is_fork) or (preferred_module == "fork" and not module_is_fork):
-                    print(f"Device {device_id} has different module type, switching to {preferred_module.upper()}")
-                    devices_to_update.append(device_id)
+                # Skip devices with Fix module - only update Fork devices
+                if not module_is_fork:
+                    print(f"Device {device_id} has Fix module, skipping (only Fork devices are updated)")
                     continue
                 
                 # Extract and compare versions
-                if module_is_fork:
-                    version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
-                else:
-                    version_match = re.search(r'Fix\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
+                version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
                     
                 if version_match:
                     current_version = version_match.group(1)
@@ -3751,12 +3557,12 @@ async def optimized_module_update_task():
 
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"🚀 Installing {preferred_module.upper()} version {new_version} on {update_count} devices")
+                print(f"Installing FORK version {new_version} on {update_count} devices")
                 
                 for device_id in devices_to_update:
                     try:
-                        print(f"⚡ Updating device {device_id} to {preferred_module.upper()} version {new_version}")
-                        await install_module_with_progress(device_id, module_path, preferred_module)
+                        print(f"Updating device {device_id} to FORK version {new_version}")
+                        await install_module_with_progress(device_id, module_path, "fork")
                         
                         # Mark device for version refresh
                         version_manager.mark_for_refresh(device_id)
@@ -3764,22 +3570,22 @@ async def optimized_module_update_task():
                     except Exception as e:
                         print(f"Error installing module on {device_id}: {str(e)}")
                 
-                print(f"✅ {preferred_module.upper()} update complete")
+                print("FORK update complete")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("✅ All devices already have the latest version. No updates needed.")
+                print("All devices already have the latest version. No updates needed.")
 
         except Exception as e:
-            print(f"❌ Module Auto-Update Error: {str(e)}")
+            print(f"Module Auto-Update Error: {str(e)}")
             import traceback
             traceback.print_exc()
 
         await asyncio.sleep(3 * 3600)
 
 async def install_module_with_progress(device_ip: str, module_path=None, module_type="fork"):
-    """Installs PlayIntegrityFork or PlayIntegrityFix module with progress updates for the UI"""
+    """Installs PlayIntegrityFork module with progress updates for the UI"""
     global update_in_progress, current_progress
     
     def cleanup_installation():
@@ -3881,7 +3687,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         update_progress(60)
         
         # Verify module was installed
-        module_dir = "/data/adb/modules/playintegrityfork" if module_type == "fork" else "/data/adb/modules/playintegrityfix"
+        module_dir = "/data/adb/modules/playintegrityfork"
         verify_result = adb_pool.execute_command(
             device_id,
             ["adb", "shell", f"su -c 'ls -la {module_dir}'"]
@@ -3949,14 +3755,13 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         
         device_status_cache.clear()
         version_manager.mark_for_refresh(device_id)
-        print(f"{module_type.upper()} update successfully completed for {device_id}")
+        print(f"FORK update successfully completed for {device_id}")
         
         # Clear GitHub API cache to ensure fresh version info on next check
         clear_github_api_cache()
 
         # Now that we've verified installation, send notification
-        module_name = "PlayIntegrityFork" if module_type == "fork" else "PlayIntegrityFix"
-        await notify_update_installed(device_name, device_id, module_name, version)
+        await notify_update_installed(device_name, device_id, "PlayIntegrityFork", version)
         
         status_data = await get_status_data()
         await ws_manager.broadcast(status_data)
@@ -4099,7 +3904,7 @@ async def optimized_device_monitoring():
                 mem_mb = mem_free / 1024 if mem_free > 0 else 0
                 
                 # Print detailed status information
-                status_emoji = "✅" if is_alive else "❌"
+                status_emoji = "âœ…" if is_alive else "âŒ"
                 memory_status = f"{mem_mb:.2f} MB / {device.get('memory_threshold', 200)} MB"
                 
                 # Create detailed status line 
@@ -4790,7 +4595,7 @@ def status_page(request: Request):
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
             "status": check_adb_connection(ip)[0],
-            "is_alive": "✅" if status["is_alive"] else "❌",
+            "is_alive": "âœ…" if status["is_alive"] else "âŒ",
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
@@ -5123,19 +4928,6 @@ async def api_all_module_versions(request: Request):
     versions = await get_all_module_versions_for_ui()
     return versions
 
-@app.post("/settings/set-module-preference")
-async def set_module_preference(request: Request, module_type: str = Form(...)):
-    """Sets the preferred module type in configuration"""
-    if not is_logged_in(request):
-        return RedirectResponse(url="/login", status_code=302)
-    
-    if module_type not in ["fork", "fix"]:
-        module_type = "fork"
-    
-    config = save_module_preference(module_type)
-    
-    return RedirectResponse(url="/settings?success=Module preference updated successfully", status_code=302)
-
 @app.post("/devices/restart-apps", response_class=HTMLResponse)
 async def restart_apps(request: Request, device_ip: str = Form(...)):
     if redirect := require_login(request):
@@ -5181,24 +4973,6 @@ def reboot_device(request: Request, device_ip: str = Form(...)):
     except Exception as e:
         print(f"Error rebooting device {device_id}: {str(e)}")
         return RedirectResponse(url="/status?error=Failed to reboot device", status_code=302)
-
-@app.post("/devices/authorize", response_class=HTMLResponse)
-def authorize_device(request: Request, device_ip: str = Form(...)):
-    if redirect := require_login(request):
-        return redirect
-    
-    try:
-        device_id = format_device_id(device_ip)
-        
-        success = streamlined_adb_authorization(device_id)
-        
-        if success:
-            return RedirectResponse(url="/settings?success=Device authorized successfully", status_code=302)
-        else:
-            return RedirectResponse(url="/settings?error=Failed to authorize device. Root access required.", status_code=302)
-    except Exception as e:
-        print(f"Error authorizing device {device_ip}: {str(e)}")
-        return RedirectResponse(url="/settings?error=Authorization error: {str(e)}", status_code=302)
 
 @app.websocket("/ws/htmx/status")
 async def websocket_htmx_endpoint(websocket: WebSocket):
