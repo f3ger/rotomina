@@ -672,7 +672,7 @@ class TimeoutConfig:
 # Helper functions for specific notifications
 async def notify_device_offline(device_name: str, ip: str):
     """Notifies when a device goes offline"""
-    message = f"Ã¢Å¡Â Ã¯Â¸Â Device **{device_name}** ({ip}) is offline."
+    message = f"Device **{device_name}** ({ip}) is offline."
     await send_discord_notification(
         message=message,
         title="Device Offline",
@@ -681,7 +681,7 @@ async def notify_device_offline(device_name: str, ip: str):
 
 async def notify_device_online(device_name: str, ip: str):
     """Notifies when a device comes back online"""
-    message = f"Ã¢Å“â€¦ Device **{device_name}** ({ip}) is back online and MITM was successfully started."
+    message = f"Device **{device_name}** ({ip}) is back online and MITM was successfully started."
     await send_discord_notification(
         message=message,
         title="Device Online",
@@ -695,7 +695,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
     
     threshold_formatted = f"{threshold} MB"
     
-    message = (f"Ã°Å¸â€â€ž Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
+    message = (f"Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
               f"Available memory: **{memory_formatted}** (Threshold: {threshold_formatted})")
     
     await send_discord_notification(
@@ -706,7 +706,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     """Notifies when an update has been installed on a device"""
-    message = f"Ã°Å¸â€œÂ² **{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
+    message = f"**{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
     
     await send_discord_notification(
         message=message,
@@ -716,7 +716,7 @@ async def notify_update_installed(device_name: str, ip: str, update_type: str, v
 
 async def notify_update_downloaded(update_type: str, version: str):
     """Notifies when an update has been downloaded"""
-    message = f"Ã°Å¸â€™Â¾ New **{update_type}** version {version} has been downloaded and is ready for installation."
+    message = f"New **{update_type}** version {version} has been downloaded and is ready for installation."
     
     await send_discord_notification(
         message=message,
@@ -1878,7 +1878,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if recovery_action:
                 if strategy_name == "cache_clear":
                     await send_discord_notification(
-                        message=f"Ã¢Å¡Â Ã¯Â¸Â Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
+                        message=f"Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
                         title="Installation Retry - Clearing Cache",
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -1887,7 +1887,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     update_progress(40)
                 elif strategy_name == "uninstall_reinstall":
                     await send_discord_notification(
-                        message=f"Ã¢Å¡Â Ã¯Â¸Â Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
+                        message=f"Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
                         title="Installation Retry - Uninstalling", 
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -1914,7 +1914,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Handle final failure
         if not installation_success:
             await send_discord_notification(
-                message=f"Ã¢ÂÅ’ All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
+                message=f"All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
                 title="Installation Failed",
                 color=DISCORD_COLOR_RED
             )
@@ -1972,7 +1972,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             device_details = get_device_details(device_ip)
             device_name = device_details.get("display_name", device_ip.split(":")[0])
             await send_discord_notification(
-                message=f"Ã¢ÂÅ’ Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
+                message=f"Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
                 title="Update Failed - Exception",
                 color=DISCORD_COLOR_RED
             )
