@@ -672,7 +672,7 @@ class TimeoutConfig:
 # Helper functions for specific notifications
 async def notify_device_offline(device_name: str, ip: str):
     """Notifies when a device goes offline"""
-    message = f"âš ï¸ Device **{device_name}** ({ip}) is offline."
+    message = f"Ã¢Å¡Â Ã¯Â¸Â Device **{device_name}** ({ip}) is offline."
     await send_discord_notification(
         message=message,
         title="Device Offline",
@@ -681,7 +681,7 @@ async def notify_device_offline(device_name: str, ip: str):
 
 async def notify_device_online(device_name: str, ip: str):
     """Notifies when a device comes back online"""
-    message = f"âœ… Device **{device_name}** ({ip}) is back online and MITM was successfully started."
+    message = f"Ã¢Å“â€¦ Device **{device_name}** ({ip}) is back online and MITM was successfully started."
     await send_discord_notification(
         message=message,
         title="Device Online",
@@ -695,7 +695,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
     
     threshold_formatted = f"{threshold} MB"
     
-    message = (f"ðŸ”„ Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
+    message = (f"Ã°Å¸â€â€ž Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
               f"Available memory: **{memory_formatted}** (Threshold: {threshold_formatted})")
     
     await send_discord_notification(
@@ -706,7 +706,7 @@ async def notify_memory_restart(device_name: str, ip: str, memory: int, threshol
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     """Notifies when an update has been installed on a device"""
-    message = f"ðŸ“² **{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
+    message = f"Ã°Å¸â€œÂ² **{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
     
     await send_discord_notification(
         message=message,
@@ -716,7 +716,7 @@ async def notify_update_installed(device_name: str, ip: str, update_type: str, v
 
 async def notify_update_downloaded(update_type: str, version: str):
     """Notifies when an update has been downloaded"""
-    message = f"ðŸ’¾ New **{update_type}** version {version} has been downloaded and is ready for installation."
+    message = f"Ã°Å¸â€™Â¾ New **{update_type}** version {version} has been downloaded and is ready for installation."
     
     await send_discord_notification(
         message=message,
@@ -1452,28 +1452,29 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
         for retry in range(max_retries):
             print(f"Login sequence attempt {retry+1}/{max_retries} for {device_id}")
 
-            # Check if Discord Login is needed (only if DiscordData is empty)
-            if not discord_data_present:
-                # Step 1: Check if Discord Login button is present
-                discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
+            # Always check if Discord Login button is visible (token might be expired)
+            discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
 
-                if discord_login_present:
-                    # Token missing - perform full Discord login
-                    print("Discord Login button found - performing Discord authorization...")
-                    
-                    login_success = await perform_discord_login()
-                    
-                    if login_success:
-                        # Refresh and save the new config
-                        await refresh_and_save_furtif_config()
-                    else:
-                        continue
+            if discord_login_present:
+                # Discord Login button found - token missing or expired
+                if discord_data_present:
+                    print("Discord Login button found but token was expected - token expired! Performing Discord authorization...")
                 else:
-                    # Token already saved - skip Discord login
-                    print("Discord Login button not found - token already saved, proceeding directly...")
+                    print("Discord Login button found - performing Discord authorization...")
+                
+                login_success = await perform_discord_login()
+                
+                if login_success:
+                    # Refresh and save the new config
+                    await refresh_and_save_furtif_config()
+                else:
+                    continue
             else:
-                # DiscordData present but RotomTryAutoStart=false
-                print("Discord token present, skipping Discord login...")
+                # No Discord Login button - token is valid or already logged in
+                if discord_data_present:
+                    print("Discord token present and valid, proceeding...")
+                else:
+                    print("Discord Login button not found - token already saved, proceeding directly...")
 
             # Step 5: Continue with Recheck Service Status -> Start service
             # (This is needed when RotomTryAutoStart is false)
@@ -1502,7 +1503,46 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                 adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
                 await asyncio.sleep(5)
 
-        print(f"Login sequence failed after {max_retries} attempts")
+        # All retries failed - wait 5 minutes before giving up completely
+        print(f"Login sequence failed after {max_retries} attempts on {device_id}, waiting 5 minutes before final attempt...")
+        await asyncio.sleep(300)  # 5 minutes delay
+        
+        # One final attempt after the delay
+        print(f"Final attempt after 5 minute delay for {device_id}")
+        
+        # Restart app fresh
+        stop_cmd = "am force-stop com.github.furtif.furtifformaps"
+        adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
+        await asyncio.sleep(2)
+        
+        start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
+        adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
+        await asyncio.sleep(5)
+        
+        # Check for Discord Login one more time
+        discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
+        
+        if discord_login_present:
+            print("Discord Login button found in final attempt - performing authorization...")
+            login_success = await perform_discord_login()
+            if login_success:
+                await refresh_and_save_furtif_config()
+            else:
+                print(f"Final login attempt failed for {device_id}")
+                return False
+        
+        # Try Recheck Service Status -> Start service
+        recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
+        if recheck_success:
+            await asyncio.sleep(2)
+            start_success = await find_and_tap_element(["Start service"], max_attempts=3)
+            if start_success:
+                await asyncio.sleep(30)
+                if await check_apps_running():
+                    print(f"Login sequence completed successfully on final attempt for {device_id}")
+                    return True
+        
+        print(f"Login sequence failed completely for {device_id}")
         return False
 
     except Exception as e:
@@ -1838,7 +1878,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if recovery_action:
                 if strategy_name == "cache_clear":
                     await send_discord_notification(
-                        message=f"âš ï¸ Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
+                        message=f"Ã¢Å¡Â Ã¯Â¸Â Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
                         title="Installation Retry - Clearing Cache",
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -1847,7 +1887,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     update_progress(40)
                 elif strategy_name == "uninstall_reinstall":
                     await send_discord_notification(
-                        message=f"âš ï¸ Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
+                        message=f"Ã¢Å¡Â Ã¯Â¸Â Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
                         title="Installation Retry - Uninstalling", 
                         color=DISCORD_COLOR_ORANGE
                     )
@@ -1874,7 +1914,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Handle final failure
         if not installation_success:
             await send_discord_notification(
-                message=f"âŒ All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
+                message=f"Ã¢ÂÅ’ All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
                 title="Installation Failed",
                 color=DISCORD_COLOR_RED
             )
@@ -1901,7 +1941,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             else:
                 print(f"Failed to start app on {device_ip} after update")
                 await send_discord_notification(
-                    message=f"âš ï¸ Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
+                    message=f"Ã¢Å¡Â Ã¯Â¸Â Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
                     title="Installation OK, Startup Failed",
                     color=DISCORD_COLOR_ORANGE
                 )
@@ -1932,7 +1972,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             device_details = get_device_details(device_ip)
             device_name = device_details.get("display_name", device_ip.split(":")[0])
             await send_discord_notification(
-                message=f"âŒ Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
+                message=f"Ã¢ÂÅ’ Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
                 title="Update Failed - Exception",
                 color=DISCORD_COLOR_RED
             )
@@ -1952,19 +1992,19 @@ async def optimized_pogo_update_task():
         try:
             config = load_config()
             
-            print("ðŸ” Checking for PoGO updates...")
+            print("Ã°Å¸â€Â Checking for PoGO updates...")
             
             # Get versions and download latest version
             get_available_versions.cache_clear()
             versions = get_available_versions()
             
             if not versions.get("latest"):
-                print("âŒ No valid PoGO version available, skipping check.")
+                print("Ã¢ÂÅ’ No valid PoGO version available, skipping check.")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions["latest"]["version"]
-            print(f"ðŸ“Œ Latest available PoGO version: {latest_version}")
+            print(f"Ã°Å¸â€œÅ’ Latest available PoGO version: {latest_version}")
             
             # Always download latest version
             ensure_latest_apk_downloaded()
@@ -1991,7 +2031,7 @@ async def optimized_pogo_update_task():
             
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"ðŸš€ Installing PoGO version {latest_version} on {update_count} devices that need updates")
+                print(f"Ã°Å¸Å¡â‚¬ Installing PoGO version {latest_version} on {update_count} devices that need updates")
                 
                 # Process each device
                 for device_id in devices_to_update:
@@ -1999,15 +2039,15 @@ async def optimized_pogo_update_task():
                     # Mark device for version refresh
                     version_manager.mark_for_refresh(device_id)
                 
-                print("âœ… PoGO automatic update complete")
+                print("Ã¢Å“â€¦ PoGO automatic update complete")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("âœ… All devices already have the latest version. No updates needed.")
+                print("Ã¢Å“â€¦ All devices already have the latest version. No updates needed.")
             
         except Exception as e:
-            print(f"âŒ PoGO Auto-Update Error: {str(e)}")
+            print(f"Ã¢ÂÅ’ PoGO Auto-Update Error: {str(e)}")
             import traceback
             traceback.print_exc()
             
@@ -2607,7 +2647,7 @@ class MapWorldUpdater:
             comparison = self.compare_versions(installed_version, new_version)
             
             if comparison < 0:
-                return True, f"Update available: {installed_version} â†’ {new_version}"
+                return True, f"Update available: {installed_version} Ã¢â€ â€™ {new_version}"
             elif comparison == 0:
                 return False, f"Same version already installed: {installed_version}"
             else:
@@ -2949,7 +2989,7 @@ async def check_all_device_versions() -> Dict:
                 )
                 if comparison < 0:
                     device_result["update_available"] = True
-                    device_result["update_info"] = f"{device_result['installed_version']} â†’ {available_version}"
+                    device_result["update_info"] = f"{device_result['installed_version']} Ã¢â€ â€™ {available_version}"
                 elif comparison == 0:
                     device_result["update_available"] = False
                     device_result["update_info"] = "Up to date"
@@ -3087,7 +3127,7 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} â†’ {new_filename}")
+        logger.info(f"Renamed {current_filename} Ã¢â€ â€™ {new_filename}")
         
         return True
         
@@ -3160,7 +3200,7 @@ def quick_fix_version() -> bool:
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} â†’ {new_filename}")
+        logger.info(f"Fixed version: {current_apk.name} Ã¢â€ â€™ {new_filename}")
         return True
         
     except Exception as e:
@@ -3904,7 +3944,7 @@ async def optimized_device_monitoring():
                 mem_mb = mem_free / 1024 if mem_free > 0 else 0
                 
                 # Print detailed status information
-                status_emoji = "âœ…" if is_alive else "âŒ"
+                status_emoji = "✓" if is_alive else "✗"
                 memory_status = f"{mem_mb:.2f} MB / {device.get('memory_threshold', 200)} MB"
                 
                 # Create detailed status line 
@@ -4595,7 +4635,7 @@ def status_page(request: Request):
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
             "status": check_adb_connection(ip)[0],
-            "is_alive": "âœ…" if status["is_alive"] else "âŒ",
+            "is_alive": "Ã¢Å“â€¦" if status["is_alive"] else "Ã¢ÂÅ’",
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
