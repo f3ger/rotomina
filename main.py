@@ -1970,7 +1970,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             else:
                 log("Failed to start app after update", device_ip, "ERROR")
                 await send_discord_notification(
-                    message=f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
+                    message=f"Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
                     title="Installation OK, Startup Failed",
                     color=DISCORD_COLOR_ORANGE
                 )
