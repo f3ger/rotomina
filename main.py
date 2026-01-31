@@ -42,6 +42,32 @@ current_progress = 0
 devices_in_update = {}  # Format: {device_id: {"in_update": True, "update_type": "pogo/mitm/pif", "started_at": timestamp}}
 device_runtimes = {}
 
+# Logging Helper
+_display_name_cache = {}
+
+def log(message: str, device_id: str = None, category: str = "INFO"):
+    """Einheitliche Log-Ausgabe mit Zeitstempel und Geräte-Zuordnung."""
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+
+    if device_id:
+        device_id = format_device_id(device_id)
+        if device_id not in _display_name_cache:
+            config = load_config()
+            device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
+            _display_name_cache[device_id] = device.get("display_name") if device else device_id.split(":")[0]
+        tag = _display_name_cache[device_id]
+    else:
+        tag = "--SYSTEM--"
+
+    print(f"[{timestamp}] [{tag}] [{category}] {message}")
+
+def clear_display_name_cache(device_id: str = None):
+    """Cache leeren wenn display_name geändert wird."""
+    if device_id:
+        _display_name_cache.pop(format_device_id(device_id), None)
+    else:
+        _display_name_cache.clear()
+
 # WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
@@ -50,11 +76,11 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.add(websocket)
-        print(f"WebSocket client connected. Total active connections: {len(self.active_connections)}")
+        log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
-        print(f"WebSocket client disconnected. Remaining connections: {len(self.active_connections)}")
+        log(f"WebSocket client disconnected ({len(self.active_connections)} remaining)", None, "API")
 
     async def broadcast(self, message: dict):
         disconnected_websockets = set()
@@ -63,7 +89,7 @@ class ConnectionManager:
             try:
                 await connection.send_json(message)
             except Exception as e:
-                print(f"Error broadcasting to WebSocket: {e}")
+                log(f"Error broadcasting to WebSocket: {e}", None, "ERROR")
                 disconnected_websockets.add(connection)
         
         # Remove disconnected websockets
@@ -71,7 +97,7 @@ class ConnectionManager:
             self.active_connections.discard(ws)
             
         if disconnected_websockets:
-            print(f"Removed {len(disconnected_websockets)} disconnected WebSocket(s). Remaining: {len(self.active_connections)}")
+            log(f"Removed {len(disconnected_websockets)} disconnected WebSocket(s) ({len(self.active_connections)} remaining)", None, "API")
 
 # Initialize WebSocket manager
 ws_manager = ConnectionManager()
@@ -130,7 +156,7 @@ class ADBConnectionPool:
                 )
                 
                 if "connected to" in connect_result.stdout and "already" not in connect_result.stdout:
-                    print(f"Device {device_id} newly connected")
+                    log("Newly connected via ADB", device_id, "INFO")
                 
                 if "failed" in connect_result.stdout.lower() or "cannot" in connect_result.stdout.lower():
                     return False
@@ -200,7 +226,7 @@ class ADBConnectionPool:
         if result.returncode == 0:
             return result.stdout
         else:
-            print(f"Batch command failed: {result.stderr}")
+            log(f"Batch command failed: {result.stderr}", device_id, "ERROR")
             return ""
             
     def cleanup_connections(self):
@@ -269,7 +295,7 @@ class VersionManager:
             # If device is in update, use cache regardless
             if device_id in devices_in_update and devices_in_update[device_id]["in_update"]:
                 needs_refresh = False
-                print(f"Device {device_id} in update process, using cached version info")
+                log("In update process, using cached version info", device_id, "VERSION")
             
             # Remove refresh marker if present
             self.forced_refresh_device.discard(device_id)
@@ -302,10 +328,10 @@ class VersionManager:
                     pogo_match = re.search(r'versionName=(\d+\.\d+\.\d+)', pogo_result.stdout)
                     if pogo_match:
                         version_info["pogo_version"] = pogo_match.group(1)
-                        print(f"Got PoGo version for {device_id}: {version_info['pogo_version']}")
+                        log(f"PoGo: {version_info['pogo_version']}", device_id, "VERSION")
                         success = True
             except Exception as e:
-                print(f"Error getting PoGo version for {device_id}: {str(e)}")
+                log(f"PoGo version error: {str(e)}", device_id, "ERROR")
             
             # Try MITM version
             try:
@@ -315,10 +341,10 @@ class VersionManager:
                     mitm_match = re.search(r'versionName=(\d+\.\d+(?:\.\d+)?)', mitm_result.stdout)
                     if mitm_match:
                         version_info["mitm_version"] = mitm_match.group(1)
-                        print(f"Got MITM version for {device_id}: {version_info['mitm_version']}")
+                        log(f"MITM: {version_info['mitm_version']}", device_id, "VERSION")
                         success = True
             except Exception as e:
-                print(f"Error getting MITM version for {device_id}: {str(e)}")
+                log(f"MITM version error: {str(e)}", device_id, "ERROR")
             
             # Try Fix module
             try:
@@ -329,10 +355,10 @@ class VersionManager:
                     if version_match:
                         module_version = version_match.group(1).strip()
                         version_info["module_version"] = f"Fix {module_version}"
-                        print(f"Got Fix module version for {device_id}: {version_info['module_version']}")
+                        log(f"Module: {version_info['module_version']}", device_id, "VERSION")
                         success = True
             except Exception as e:
-                print(f"Error getting Fix module version for {device_id}: {str(e)}")
+                log(f"Fix module version error: {str(e)}", device_id, "ERROR")
             
             # Try Fork module if Fix not found
             if version_info["module_version"] == "N/A":
@@ -344,30 +370,30 @@ class VersionManager:
                         if version_match:
                             module_version = version_match.group(1).strip()
                             version_info["module_version"] = f"Fork {module_version}"
-                            print(f"Got Fork module version for {device_id}: {version_info['module_version']}")
+                            log(f"Module: {version_info['module_version']}", device_id, "VERSION")
                             success = True
                 except Exception as e:
-                    print(f"Error getting Fork module version for {device_id}: {str(e)}")
+                    log(f"Fork module version error: {str(e)}", device_id, "ERROR")
             
             # Update cache if we got at least one value
             if success:
                 with self.version_lock:
                     self.version_cache[device_id] = version_info
-                print(f"Retrieved version info for {device_id}")
+                log("Version info retrieved", device_id, "VERSION")
                 return version_info
                 
         except Exception as e:
-            print(f"Error in version checks for {device_id}: {str(e)}")
+            log(f"Version check error: {str(e)}", device_id, "ERROR")
         
         # Return cached data if we have it, rather than failing completely
         if previous_info:
-            print(f"Using cached version info for {device_id} as fallback")
+            log("Using cached version info as fallback", device_id, "VERSION")
             return previous_info
         
         # If all else fails
-        print(f"No version information available for {device_id}")
+        log("No version information available", device_id, "VERSION")
         return version_info
-        
+
     def get_devices_needing_pogo_update(self, latest_version):
         """
         Finds devices needing a PoGo update
@@ -387,27 +413,27 @@ class VersionManager:
             # Check ADB connection only once per device
             connected, error = check_adb_connection(device_id)
             if not connected:
-                print(f"Device {device_id} not reachable via ADB, skipping update check: {error}")
+                log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
                 continue
                 
             # Get version info from cache (no force refresh)
             version_info = self.get_version_info(device_id, force_refresh=False)
             
             if not version_info:
-                print(f"No version information available for {device_id}")
+                log("No version information available", device_id, "VERSION")
                 continue
                 
             installed_version = version_info.get("pogo_version", "N/A")
             
             # Compare versions
             if installed_version == "N/A":
-                print(f"Device {device_id} has unknown PoGo version, will update")
+                log("Unknown PoGo version, will update", device_id, "UPDATE")
                 devices_to_update.append(device_id)
             elif installed_version != latest_version:
-                print(f"Device {device_id} needs update from {installed_version} to {latest_version}")
+                log(f"Needs update from {installed_version} to {latest_version}", device_id, "UPDATE")
                 devices_to_update.append(device_id)
             else:
-                print(f"Device {device_id} already has latest version {latest_version}, skipping")
+                log(f"Already has latest version {latest_version}, skipping", device_id, "UPDATE")
                 
         return devices_to_update
     
@@ -425,7 +451,7 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
         config = load_config()
         devices_to_update = []
         
-        print(f"Checking {len(config.get('devices', []))} devices in config for FORK module updates")
+        log(f"Checking {len(config.get('devices', []))} devices for FORK module updates", None, "UPDATE")
         
         # Get a set of device IPs from the config for faster lookup
         config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
@@ -435,34 +461,34 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
             
             # Skip devices that are not in the config (this is a safety check)
             if device_id not in config_device_ips:
-                print(f"Device {device_id} not found in config, skipping update check")
+                log("Not found in config, skipping update check", device_id, "UPDATE")
                 continue
             
             # Check ADB connection only once per device
             connected, error = check_adb_connection(device_id)
             if not connected:
-                print(f"Device {device_id} not reachable via ADB, skipping update check: {error}")
+                log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
                 continue
                 
             # Get version info from cache (no force refresh)
             version_info = self.get_version_info(device_id, force_refresh=False)
             
             if not version_info:
-                print(f"No version information available for {device_id}")
+                log("No version information available", device_id, "VERSION")
                 continue
                 
             installed_module = version_info.get("module_version", "N/A").strip()
             
             # Skip devices without any module installed
             if installed_module == "N/A":
-                print(f"No PlayIntegrity module found on {device_id}, skipping")
+                log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
                 continue
                 
             module_is_fork = "Fork" in installed_module
             
             # Skip devices with Fix module - only update Fork devices
             if not module_is_fork:
-                print(f"Device {device_id} has Fix module, skipping (only Fork devices are updated)")
+                log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
                 continue
             
             # Extract current version
@@ -470,7 +496,7 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
                 
             if version_match:
                 current_version = version_match.group(1)
-                print(f"Current module version on {device_id}: {current_version}, available: {latest_version}")
+                log(f"Module version: {current_version}, available: {latest_version}", device_id, "VERSION")
                 
                 # Compare version numbers
                 try:
@@ -478,17 +504,17 @@ def get_devices_needing_module_update(self, latest_version, module_type="fork"):
                     new_tuple = parse_version(latest_version)
                     
                     if current_tuple < new_tuple:
-                        print(f"Update needed for {device_id}! Installed: {current_version}, Available: {latest_version}")
+                        log(f"Update needed: {current_version} -> {latest_version}", device_id, "UPDATE")
                         devices_to_update.append(device_id)
                     else:
-                        print(f"Device {device_id} already has latest version, skipping update")
+                        log("Already has latest version, skipping update", device_id, "UPDATE")
                 except (ValueError, AttributeError):
-                    print(f"Invalid version format for comparison on {device_id}")
+                    log("Invalid version format for comparison", device_id, "ERROR")
             else:
-                print(f"Could not parse version from {installed_module} on {device_id}, scheduling update")
+                log(f"Could not parse version from {installed_module}, scheduling update", device_id, "UPDATE")
                 devices_to_update.append(device_id)
                 
-        print(f"Found {len(devices_to_update)} devices that need FORK module update")
+        log(f"Found {len(devices_to_update)} devices needing FORK module update", None, "UPDATE")
         
         # Final verification that all devices to update are in the config
         devices_to_update = [dev for dev in devices_to_update if dev in config_device_ips]
@@ -511,24 +537,27 @@ def save_config(config):
             try:
                 shutil.copy2(CONFIG_FILE, backup_file)
             except Exception as e:
-                print(f"Warning: Could not create config backup: {e}")
+                log(f"Warning: Could not create config backup: {e}", None, "CONFIG")
         
         # Write new config
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
             f.flush()
-            
+
+        # Clear display name cache when config changes
+        clear_display_name_cache()
+
     except Exception as e:
-        print(f"Error saving config: {e}")
+        log(f"Error saving config: {e}", None, "ERROR")
         # Try to restore from backup
         backup_file = CONFIG_FILE.with_suffix('.json.bak')
         if backup_file.exists():
-            print("Attempting to restore config from backup...")
+            log("Attempting to restore config from backup", None, "CONFIG")
             try:
                 shutil.copy2(backup_file, CONFIG_FILE)
-                print("Config restored from backup")
+                log("Config restored from backup", None, "CONFIG")
             except Exception as restore_error:
-                print(f"Failed to restore config: {restore_error}")
+                log(f"Failed to restore config: {restore_error}", None, "ERROR")
 
 def load_config():
     """
@@ -544,7 +573,7 @@ def load_config():
     }
     
     if not CONFIG_FILE.exists():
-        print(f"Config file not found at {CONFIG_FILE}, creating default config...")
+        log(f"Config file not found, creating default config", None, "CONFIG")
         save_config(default_config)
         return default_config
     
@@ -552,7 +581,7 @@ def load_config():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        print(f"Error reading config file: {e}, creating default config...")
+        log(f"Error reading config file: {e}, creating default config", None, "ERROR")
         save_config(default_config)
         return default_config
     
@@ -645,14 +674,14 @@ async def send_discord_notification(message: str, title: str = None, color: int 
             )
             
             if response.status_code >= 200 and response.status_code < 300:
-                print(f"Discord notification sent: {message}")
+                log(f"Discord notification sent: {message}", None, "API")
                 return True
             else:
-                print(f"Discord webhook error: {response.status_code} - {response.text}")
+                log(f"Discord webhook error: {response.status_code}", None, "ERROR")
                 return False
                 
     except Exception as e:
-        print(f"Error sending Discord notification: {str(e)}")
+        log(f"Error sending Discord notification: {str(e)}", None, "ERROR")
         return False
 
 # Discord Message Color Constants
@@ -733,14 +762,14 @@ def mark_device_in_update(device_id: str, update_type: str) -> None:
         "update_type": update_type,
         "started_at": time.time()
     }
-    print(f"Device {device_id} marked for {update_type} update - will be excluded from automatic restarts")
+    log(f"Marked for {update_type} update - excluded from automatic restarts", device_id, "UPDATE")
 
 def clear_device_update_status(device_id: str) -> None:
     """Removes the update marking from a device"""
     device_id = format_device_id(device_id)
     if device_id in devices_in_update:
         del devices_in_update[device_id]
-        print(f"Device {device_id} has completed update - normal monitoring restored")
+        log("Update completed - normal monitoring restored", device_id, "UPDATE")
 
 # ADB Functions - Optimized with connection pool
 @ttl_cache(ttl=3600)
@@ -852,7 +881,7 @@ def read_device_furtif_config(device_id: str) -> dict:
                 json_end = raw_output.rfind('}')
                 
                 if json_start == -1 or json_end == -1 or json_end <= json_start:
-                    print(f"Device {device_id}: No valid JSON found in Furtif config output")
+                    log("No valid JSON found in Furtif config output", device_id, "CONFIG")
                     return furtif_config
                 
                 # Extract only the JSON part
@@ -865,7 +894,7 @@ def read_device_furtif_config(device_id: str) -> dict:
                 
                 # Validate that we got a dict
                 if not isinstance(device_config, dict):
-                    print(f"Device {device_id}: Furtif config is not a valid dictionary")
+                    log("Furtif config is not a valid dictionary", device_id, "CONFIG")
                     return furtif_config
                 
                 # Extract all Rotom* settings
@@ -878,19 +907,19 @@ def read_device_furtif_config(device_id: str) -> dict:
                 furtif_config["PackageName"] = device_config.get("PackageName", "com.nianticlabs.pokemongo")
                 furtif_config["DiscordData"] = device_config.get("DiscordData", "")
                 
-                print(f"Read Furtif config from {device_id}: RotomTryAutoStart={furtif_config.get('RotomTryAutoStart', False)}, DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}")
+                log(f"Furtif config: RotomTryAutoStart={furtif_config.get('RotomTryAutoStart', False)}, DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}", device_id, "CONFIG")
                 
             except json.JSONDecodeError as e:
-                print(f"Device {device_id}: Failed to parse Furtif config.json: {e}")
+                log(f"Failed to parse Furtif config.json: {e}", device_id, "ERROR")
             except Exception as e:
-                print(f"Device {device_id}: Error processing Furtif config: {e}")
+                log(f"Error processing Furtif config: {e}", device_id, "ERROR")
         else:
-            print(f"Device {device_id}: Could not read Furtif config.json (returncode={result.returncode})")
+            log(f"Could not read Furtif config.json (returncode={result.returncode})", device_id, "CONFIG")
             
     except subprocess.TimeoutExpired:
-        print(f"Device {device_id}: Timeout reading Furtif config.json")
+        log("Timeout reading Furtif config.json", device_id, "ERROR")
     except Exception as e:
-        print(f"Error reading Furtif config for {device_id}: {e}")
+        log(f"Error reading Furtif config: {e}", device_id, "ERROR")
     
     return furtif_config
 
@@ -932,7 +961,7 @@ def get_device_details(device_id: str) -> dict:
         
         # If new device or no stored config yet, read from device once
         if is_new_device or not stored_furtif_config:
-            print(f"Reading Furtif config for {device_id} (first time or missing)...")
+            log("Reading Furtif config (first time or missing)", device_id, "CONFIG")
             furtif_config = read_device_furtif_config(device_id)
             if furtif_config:
                 stored_furtif_config = furtif_config
@@ -959,7 +988,7 @@ def get_device_details(device_id: str) -> dict:
         update_device_info(device_id, details, stored_furtif_config if stored_furtif_config else None)
         return details
     except Exception as e:
-        print(f"Device detail error {device_id}: {str(e)}")
+        log(f"Device detail error: {str(e)}", device_id, "ERROR")
         return {
             "display_name": device.get("display_name", device_id.split(":")[0] if ":" in device_id else device_id) if device else device_id,
             "pogo_version": "N/A",
@@ -987,7 +1016,7 @@ def ensure_adb_keys() -> str:
             adb_public_key = os.path.join(android_dir, "adbkey.pub")
         
         if not os.path.exists(android_dir):
-            print(f"Creating Android directory: {android_dir}")
+            log(f"Creating Android directory: {android_dir}", None, "CONFIG")
             os.makedirs(android_dir, exist_ok=True)
         
         private_key_exists = os.path.exists(adb_private_key) and os.path.getsize(adb_private_key) > 0
@@ -995,13 +1024,13 @@ def ensure_adb_keys() -> str:
         public_key_exists = os.path.exists(adb_public_key) and os.path.getsize(adb_public_key) > 0
         
         if not private_key_exists:
-            print(f"Private ADB key not found at {adb_private_key}, generating new keys...")
+            log("Private ADB key not found, generating new keys", None, "CONFIG")
             try:
                 subprocess.run(["adb", "keygen", adb_private_key], check=True, timeout=TimeoutConfig.ADB_KEYGEN)
                 private_key_exists = os.path.exists(adb_private_key) and os.path.getsize(adb_private_key) > 0
-                print(f"Generated private key with adb keygen: {private_key_exists}")
+                log(f"Generated private key with adb keygen: {private_key_exists}", None, "CONFIG")
             except (subprocess.SubprocessError, FileNotFoundError) as e:
-                print(f"adb keygen failed: {str(e)}, trying alternative approach...")
+                log(f"adb keygen failed: {str(e)}, trying alternative approach", None, "CONFIG")
                 
                 try:
                     subprocess.run(
@@ -1009,32 +1038,32 @@ def ensure_adb_keys() -> str:
                         check=True, timeout=10
                     )
                     private_key_exists = os.path.exists(adb_private_key) and os.path.getsize(adb_private_key) > 0
-                    print(f"Generated private key with OpenSSL: {private_key_exists}")
+                    log(f"Generated private key with OpenSSL: {private_key_exists}", None, "CONFIG")
                 except (subprocess.SubprocessError, FileNotFoundError) as e:
-                    print(f"Failed to generate private key with OpenSSL: {str(e)}")
+                    log(f"Failed to generate private key with OpenSSL: {str(e)}", None, "ERROR")
         
         if private_key_exists and not public_key_exists:
-            print(f"Public key not found at {adb_public_key}, generating from private key...")
+            log("Public key not found, generating from private key", None, "CONFIG")
             try:
                 subprocess.run(
                     ["openssl", "rsa", "-in", adb_private_key, "-pubout", "-out", adb_public_key],
                     check=True, timeout=10
                 )
                 public_key_exists = os.path.exists(adb_public_key) and os.path.getsize(adb_public_key) > 0
-                print(f"Generated public key: {public_key_exists}")
+                log(f"Generated public key: {public_key_exists}", None, "CONFIG")
             except (subprocess.SubprocessError, FileNotFoundError) as e:
-                print(f"Failed to generate public key: {str(e)}")
+                log(f"Failed to generate public key: {str(e)}", None, "ERROR")
         
         if public_key_exists:
             with open(adb_public_key, "r") as f:
                 content = f.read().strip()
-                print(f"Found ADB public key ({len(content)} bytes)")
+                log(f"Found ADB public key ({len(content)} bytes)", None, "CONFIG")
                 return content
         else:
-            print("Failed to ensure ADB keys exist")
+            log("Failed to ensure ADB keys exist", None, "ERROR")
             return ""
     except Exception as e:
-        print(f"Error ensuring ADB keys: {str(e)}")
+        log(f"Error ensuring ADB keys: {str(e)}", None, "ERROR")
         traceback.print_exc()
         return ""
 
@@ -1053,28 +1082,28 @@ def sync_system_adb_key():
         target_key_path = additional_keys_dir / "adbkey.pub"
         
         if not os.path.exists(system_key_path):
-            print(f"System ADB key not found at {system_key_path}")
+            log(f"System ADB key not found at {system_key_path}", None, "CONFIG")
             return False
         
         if not additional_keys_dir.exists():
-            print(f"Creating additional keys directory: {additional_keys_dir}")
+            log(f"Creating additional keys directory: {additional_keys_dir}", None, "CONFIG")
             additional_keys_dir.mkdir(parents=True, exist_ok=True)
         
         with open(system_key_path, "r") as f:
             key_content = f.read().strip()
             
         if not key_content:
-            print(f"System ADB key is empty, nothing to sync")
+            log("System ADB key is empty, nothing to sync", None, "CONFIG")
             return False
             
         with open(target_key_path, "w") as f:
             f.write(key_content)
             
-        print(f"Successfully synchronized system ADB key to {target_key_path}")
+        log(f"Synchronized system ADB key to {target_key_path}", None, "CONFIG")
         return True
             
     except Exception as e:
-        print(f"Error synchronizing system ADB key: {str(e)}")
+        log(f"Error synchronizing system ADB key: {str(e)}", None, "ERROR")
         return False
 
 # Optimized ADB Authorization
@@ -1103,12 +1132,12 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         config = load_config()
         device = next((dev for dev in config.get("devices", []) if dev["ip"] == device_id), None)
         if not device:
-            print(f"Warning: Device {device_id} not found in config, not starting app")
+            log("Not found in config, not starting app", device_id, "LOGIN")
             return False
         
         # Ensure ADB connection
         if not adb_pool.ensure_connected(device_id):
-            print(f"Cannot establish ADB connection to {device_id}, app start failed")
+            log("Cannot establish ADB connection, app start failed", device_id, "ERROR")
             return False
         
         # Force stop both apps in one command
@@ -1116,7 +1145,7 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         stop_result = adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
         
         if stop_result.returncode != 0:
-            print(f"Warning: Failed to stop apps on {device_id}: {stop_result.stderr}")
+            log(f"Warning: Failed to stop apps: {stop_result.stderr}", device_id, "LOGIN")
         
         await asyncio.sleep(2)
         
@@ -1127,7 +1156,7 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         )
         
         if start_result.returncode != 0:
-            print(f"Failed to start MITM app on {device_id}: {start_result.stderr}")
+            log(f"Failed to start MITM app: {start_result.stderr}", device_id, "ERROR")
             return False
         
         if not run_login:
@@ -1152,14 +1181,14 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         login_success = await optimized_login_sequence(device_id, furtif_config=furtif_config)
         
         if login_success:
-            print(f"Successfully started and logged into apps on {device_id}")
+            log("Successfully started and logged into apps", device_id, "LOGIN")
             return True
         else:
-            print(f"App started but login sequence failed on {device_id}")
+            log("App started but login sequence failed", device_id, "ERROR")
             return False
             
     except Exception as e:
-        print(f"Error in optimized app start for {device_id}: {str(e)}")
+        log(f"Error in optimized app start: {str(e)}", device_id, "ERROR")
         return False
 
 async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_config: dict = None) -> bool:
@@ -1186,7 +1215,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
     discord_data_present = bool(furtif_config and furtif_config.get("DiscordData", ""))
     autostart_enabled = furtif_config.get("RotomTryAutoStart", False) if furtif_config else False
     
-    print(f"Login sequence for {device_id}: DiscordData={'present' if discord_data_present else 'empty'}, RotomTryAutoStart={autostart_enabled}")
+    log(f"Login sequence: DiscordData={'present' if discord_data_present else 'empty'}, RotomTryAutoStart={autostart_enabled}", device_id, "LOGIN")
 
     try:
         # Track WebView bounds for coordinate calculation
@@ -1276,7 +1305,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                                     center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
                                     tap_cmd = f'input tap {center_x} {center_y}'
                                     adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
-                                    print(f"Tapped '{elem_text}' at ({center_x}, {center_y})")
+                                    log(f"Tapped '{elem_text}' at ({center_x}, {center_y})", device_id, "LOGIN")
                                     return True
 
                 except Exception:
@@ -1327,14 +1356,14 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
             """
             nonlocal webview_bounds
             
-            print("Performing Discord authorization...")
+            log("Performing Discord authorization", device_id, "LOGIN")
             discord_login_success = await find_and_tap_element(["Discord Login"])
 
             if not discord_login_success:
-                print("Failed to click Discord Login button")
+                log("Failed to click Discord Login button", device_id, "ERROR")
                 return False
                 
-            print("Waiting for Discord authorization page to load...")
+            log("Waiting for Discord authorization page", device_id, "LOGIN")
             await asyncio.sleep(35)
 
             # Ensure WebView loaded
@@ -1357,11 +1386,11 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                     authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
                     if authorize_success:
                         break
-                    print(f"Authorize button not found, waiting {wait_time}s before retry...")
+                    log(f"Authorize button not found, waiting {wait_time}s", device_id, "LOGIN")
                     await asyncio.sleep(wait_time)
 
                 if not authorize_success:
-                    print("Failed to click Authorize button")
+                    log("Failed to click Authorize button", device_id, "ERROR")
                     return False
 
                 await asyncio.sleep(3)
@@ -1374,7 +1403,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
             Reads fresh config from device and saves it.
             Called after successful Discord login to update the token.
             """
-            print(f"Refreshing Furtif config from device after Discord login...")
+            log("Refreshing Furtif config after Discord login", device_id, "LOGIN")
             new_config = read_device_furtif_config(device_id)
             if new_config:
                 # Get current device info
@@ -1387,31 +1416,31 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                         "mitm_version": device.get("mitm_version", "N/A"),
                         "module_version": device.get("module_version", "N/A")
                     }, new_config)
-                    print(f"Furtif config updated with new Discord token for {device_id}")
+                    log("Furtif config updated with new Discord token", device_id, "LOGIN")
                 return new_config
             return None
 
         # === AUTOSTART MODE: DiscordData present + RotomTryAutoStart=true ===
         if discord_data_present and autostart_enabled:
-            print(f"Autostart mode enabled for {device_id} - waiting for automatic startup...")
+            log("Autostart mode enabled - waiting for automatic startup", device_id, "LOGIN")
             
             for retry in range(max_retries):
-                print(f"Autostart verification attempt {retry+1}/{max_retries} for {device_id}")
+                log(f"Autostart verification attempt {retry+1}/{max_retries}", device_id, "LOGIN")
                 
                 # Wait for autostart to complete
                 await asyncio.sleep(30)
                 
                 # Check if apps are running
                 if await check_apps_running():
-                    print(f"Autostart completed successfully on {device_id} - both apps running")
+                    log("Autostart completed successfully - both apps running", device_id, "LOGIN")
                     return True
                 
                 # Apps not running - check if Discord Login button is visible (token expired?)
-                print(f"Apps not running on {device_id}, checking for Discord Login button...")
+                log("Apps not running, checking for Discord Login button", device_id, "LOGIN")
                 discord_login_visible = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
                 
                 if discord_login_visible:
-                    print(f"Discord Login button found on {device_id} - token expired! Starting login procedure...")
+                    log("Discord Login button found - token expired! Starting login", device_id, "LOGIN")
                     
                     # Perform Discord login
                     login_success = await perform_discord_login()
@@ -1430,27 +1459,27 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                             await asyncio.sleep(2)
                             start_success = await find_and_tap_element(["Start service"], max_attempts=3)
                             if start_success:
-                                print(f"Clicked Start service after Discord login, waiting for apps...")
+                                log("Clicked Start service, waiting for apps", device_id, "LOGIN")
                                 await asyncio.sleep(30)
                                 
                                 if await check_apps_running():
-                                    print(f"Login sequence completed successfully on {device_id} after token refresh")
+                                    log("Login completed after token refresh", device_id, "LOGIN")
                                     return True
                     else:
-                        print(f"Discord login failed on {device_id}")
+                        log("Discord login failed", device_id, "ERROR")
                 else:
                     # No Discord Login button - maybe just slow, wait more
                     if retry < max_retries - 1:
-                        print(f"No Discord Login button visible, waiting longer...")
+                        log("No Discord Login button visible, waiting longer", device_id, "LOGIN")
                         await asyncio.sleep(15)
             
-            print(f"Autostart verification failed after {max_retries} attempts on {device_id}")
+            log(f"Autostart verification failed after {max_retries} attempts", device_id, "ERROR")
             return False
 
         # === MANUAL/SEMI-MANUAL MODE ===
         # Execute login sequence
         for retry in range(max_retries):
-            print(f"Login sequence attempt {retry+1}/{max_retries} for {device_id}")
+            log(f"Login sequence attempt {retry+1}/{max_retries}", device_id, "LOGIN")
 
             # Always check if Discord Login button is visible (token might be expired)
             discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
@@ -1458,9 +1487,9 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
             if discord_login_present:
                 # Discord Login button found - token missing or expired
                 if discord_data_present:
-                    print("Discord Login button found but token was expected - token expired! Performing Discord authorization...")
+                    log("Discord Login button found but token expected - token expired!", device_id, "LOGIN")
                 else:
-                    print("Discord Login button found - performing Discord authorization...")
+                    log("Discord Login button found - performing authorization", device_id, "LOGIN")
                 
                 login_success = await perform_discord_login()
                 
@@ -1472,9 +1501,9 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
             else:
                 # No Discord Login button - token is valid or already logged in
                 if discord_data_present:
-                    print("Discord token present and valid, proceeding...")
+                    log("Discord token present and valid, proceeding", device_id, "LOGIN")
                 else:
-                    print("Discord Login button not found - token already saved, proceeding directly...")
+                    log("Discord Login button not found - token already saved", device_id, "LOGIN")
 
             # Step 5: Continue with Recheck Service Status -> Start service
             # (This is needed when RotomTryAutoStart is false)
@@ -1485,15 +1514,15 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                 start_success = await find_and_tap_element(["Start service"], max_attempts=3)
 
                 if start_success:
-                    print(f"Clicked all buttons, waiting for apps to initialize...")
+                    log("Clicked all buttons, waiting for apps to initialize", device_id, "LOGIN")
                     await asyncio.sleep(30)
 
                     if await check_apps_running():
-                        print(f"Login sequence completed successfully on {device_id}")
+                        log("Login sequence completed successfully", device_id, "LOGIN")
                         return True
 
             if retry < max_retries - 1:
-                print(f"Login sequence failed, retrying {retry+2}/{max_retries}...")
+                log(f"Login sequence failed, retrying {retry+2}/{max_retries}", device_id, "LOGIN")
 
                 stop_cmd = "am force-stop com.github.furtif.furtifformaps"
                 adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
@@ -1504,11 +1533,11 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                 await asyncio.sleep(5)
 
         # All retries failed - wait 5 minutes before giving up completely
-        print(f"Login sequence failed after {max_retries} attempts on {device_id}, waiting 5 minutes before final attempt...")
+        log(f"Login failed after {max_retries} attempts, waiting 5 min for final attempt", device_id, "LOGIN")
         await asyncio.sleep(300)  # 5 minutes delay
         
         # One final attempt after the delay
-        print(f"Final attempt after 5 minute delay for {device_id}")
+        log("Final attempt after 5 minute delay", device_id, "LOGIN")
         
         # Restart app fresh
         stop_cmd = "am force-stop com.github.furtif.furtifformaps"
@@ -1523,12 +1552,12 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
         discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
         
         if discord_login_present:
-            print("Discord Login button found in final attempt - performing authorization...")
+            log("Discord Login button found in final attempt - performing authorization", device_id, "LOGIN")
             login_success = await perform_discord_login()
             if login_success:
                 await refresh_and_save_furtif_config()
             else:
-                print(f"Final login attempt failed for {device_id}")
+                log("Final login attempt failed", device_id, "ERROR")
                 return False
         
         # Try Recheck Service Status -> Start service
@@ -1539,14 +1568,14 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
             if start_success:
                 await asyncio.sleep(30)
                 if await check_apps_running():
-                    print(f"Login sequence completed successfully on final attempt for {device_id}")
+                    log("Login sequence completed successfully on final attempt", device_id, "LOGIN")
                     return True
         
-        print(f"Login sequence failed completely for {device_id}")
+        log("Login sequence failed completely", device_id, "ERROR")
         return False
 
     except Exception as e:
-        print(f"Error in optimized login sequence for {device_id}: {str(e)}")
+        log(f"Error in login sequence: {str(e)}", device_id, "ERROR")
         return False
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1561,7 +1590,7 @@ def get_available_versions() -> Dict:
             timeout=10
         )
         if response.status_code != 200:
-            print("Error: Mirror returned status code", response.status_code)
+            log(f"Mirror returned status code {response.status_code}", None, "ERROR")
             return {"latest": {}, "previous": {}}
 
         versions_data = response.json()
@@ -1598,9 +1627,9 @@ def get_available_versions() -> Dict:
         if distinct_versions:
             latest_ver = distinct_versions[0]["version"] if distinct_versions else "N/A"
             prev_ver = distinct_versions[1]["version"] if len(distinct_versions) > 1 else "N/A"
-            print(f"Found versions - Latest: {latest_ver}, Previous: {prev_ver}")
+            log(f"Found versions - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
         else:
-            print("No versions found")
+            log("No versions found", None, "VERSION")
         
         return {
             "latest": distinct_versions[0] if distinct_versions else {},
@@ -1608,12 +1637,12 @@ def get_available_versions() -> Dict:
         }
         
     except Exception as e:
-        print(f"Mirror check error: {str(e)}")
+        log(f"Mirror check error: {str(e)}", None, "ERROR")
         return {"latest": {}, "previous": {}}
 
 def download_apk(version_info: Dict) -> Path:
     try:
-        print(f"Downloading {version_info['filename']}...")
+        log(f"Downloading {version_info['filename']}...", None, "UPDATE")
         response = httpx.get(version_info["url"], follow_redirects=True)
         target_path = APK_DIR / version_info["filename"]
         
@@ -1621,11 +1650,11 @@ def download_apk(version_info: Dict) -> Path:
             f.write(response.content)
         
         get_available_versions.cache_clear()
-        print(f"Successfully downloaded {version_info['version']} and cleared version cache")
+        log(f"Downloaded {version_info['version']}, cache cleared", None, "UPDATE")
         
         return target_path
     except Exception as e:
-        print(f"Download failed: {str(e)}")
+        log(f"Download failed: {str(e)}", None, "ERROR")
         raise
 
 def ensure_latest_apk_downloaded():
@@ -1633,20 +1662,20 @@ def ensure_latest_apk_downloaded():
     versions = get_available_versions()
     
     if not versions.get("latest"):
-        print("No latest version information available")
+        log("No latest version information available", None, "VERSION")
         return
         
     latest_version = versions["latest"]["version"]
-    print(f"Latest available version: {latest_version}")
+    log(f"Latest available version: {latest_version}", None, "VERSION")
     
     target_file = APK_DIR / versions["latest"]["filename"]
     if not target_file.exists():
-        print(f"New version {latest_version} not found locally, downloading")
+        log(f"New version {latest_version} not found locally, downloading", None, "UPDATE")
         download_apk(versions["latest"])
         asyncio.create_task(notify_update_downloaded("Pokemon GO", latest_version))
         asyncio.create_task(update_ui_with_new_version())
     else:
-        print(f"Latest version {latest_version} already downloaded")
+        log(f"Latest version {latest_version} already downloaded", None, "UPDATE")
 
 async def update_ui_with_new_version():
     """Updates all connected WebSocket clients with new version information"""
@@ -1659,12 +1688,12 @@ async def update_ui_with_new_version():
         
         latest = status_data.get("pogo_latest", "N/A")
         previous = status_data.get("pogo_previous", "N/A")
-        print(f"Sending WebSocket update with versions - Latest: {latest}, Previous: {previous}")
+        log(f"Sending WebSocket update - Latest: {latest}, Previous: {previous}", None, "API")
         
         await ws_manager.broadcast(status_data)
-        print("WebSocket update for new PoGo version sent successfully")
+        log("WebSocket update for new PoGo version sent", None, "API")
     except Exception as e:
-        print(f"Error sending WebSocket update: {str(e)}")
+        log(f"Error sending WebSocket update: {str(e)}", None, "ERROR")
         import traceback
         traceback.print_exc()
 
@@ -1673,18 +1702,18 @@ def unzip_apk(apk_path: Path, extract_dir: Path):
         extract_dir.mkdir(parents=True, exist_ok=True)
         
         if any(extract_dir.iterdir()):
-            print(f"APK already extracted to {extract_dir}, skipping extraction")
+            log(f"APK already extracted to {extract_dir}, skipping", None, "UPDATE")
             return
             
-        print(f"Extracting {apk_path} to {extract_dir}")
+        log(f"Extracting {apk_path.name}", None, "UPDATE")
         with zipfile.ZipFile(apk_path, 'r') as zip_ref:
             zip_ref.extractall(extract_dir)
     except zipfile.BadZipFile:
-        print(f"Invalid ZIP file: {apk_path}")
+        log(f"Invalid ZIP file: {apk_path.name}", None, "ERROR")
         shutil.rmtree(extract_dir)
         raise
     except Exception as e:
-        print(f"Error during extraction: {str(e)}")
+        log(f"Extraction error: {str(e)}", None, "ERROR")
         raise
 
 # Optimized APK Installation
@@ -1702,14 +1731,14 @@ async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[b
     device_id = format_device_id(device_id)
     
     try:
-        print(f"Starting optimized APK installation for {device_id}")
+        log("Starting APK installation", device_id, "UPDATE")
         
         if not adb_pool.ensure_connected(device_id):
             return False, "Cannot connect to device"
             
         # Single APK case - direct install
         if len(apk_files) == 1:
-            print(f"Installing single APK: {apk_files[0]}")
+            log(f"Installing single APK: {apk_files[0].name}", device_id, "UPDATE")
             result = adb_pool.execute_command(
                 device_id,
                 ["adb", "install", "-r", str(apk_files[0])]
@@ -1720,21 +1749,21 @@ async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[b
                 
                 # Detect specific error types
                 if "INSTALL_FAILED_INSUFFICIENT_STORAGE" in error_msg:
-                    print(f"Insufficient storage on {device_id} for APK installation")
+                    log("Insufficient storage for APK installation", device_id, "ERROR")
                     return False, "INSUFFICIENT_STORAGE"
                 elif "INSTALL_FAILED_ALREADY_EXISTS" in error_msg:
                     return False, "ALREADY_EXISTS"
                 elif "INSTALL_FAILED_VERSION_DOWNGRADE" in error_msg:
                     return False, "VERSION_DOWNGRADE"
                 else:
-                    print(f"APK installation failed: {error_msg}")
+                    log(f"APK installation failed: {error_msg}", device_id, "ERROR")
                     return False, f"INSTALLATION_ERROR: {error_msg}"
                     
-            print(f"APK installed successfully on {device_id}")
+            log("APK installed successfully", device_id, "UPDATE")
             return True, "SUCCESS"
             
         # Multiple APK case
-        print(f"Installing multiple APKs: {len(apk_files)} files")
+        log(f"Installing multiple APKs: {len(apk_files)} files", device_id, "UPDATE")
         cmd = ["adb", "-s", device_id, "install-multiple", "-r"]
         cmd.extend([str(f) for f in apk_files])
         
@@ -1745,17 +1774,17 @@ async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[b
             
             # Also detect specific error types for multiple APKs
             if "INSTALL_FAILED_INSUFFICIENT_STORAGE" in error_msg:
-                print(f"Insufficient storage on {device_id} for APK installation")
+                log("Insufficient storage for APK installation", device_id, "ERROR")
                 return False, "INSUFFICIENT_STORAGE"
             else:
-                print(f"Multiple APK installation failed: {error_msg}")
+                log(f"Multiple APK installation failed: {error_msg}", device_id, "ERROR")
                 return False, f"INSTALLATION_ERROR: {error_msg}"
                 
-        print(f"Multiple APKs installed successfully on {device_id}")
+        log("Multiple APKs installed successfully", device_id, "UPDATE")
         return True, "SUCCESS"
             
     except Exception as e:
-        print(f"APK installation error for {device_id}: {str(e)}")
+        log(f"APK installation error: {str(e)}", device_id, "ERROR")
         return False, f"EXCEPTION: {str(e)}"
 
 async def clear_app_cache(device_id: str) -> bool:
@@ -1771,10 +1800,10 @@ async def clear_app_cache(device_id: str) -> bool:
     device_id = format_device_id(device_id)
     
     try:
-        print(f"Clearing Pokemon GO cache on {device_id}")
-        
+        log("Clearing Pokemon GO cache", device_id, "UPDATE")
+
         if not adb_pool.ensure_connected(device_id):
-            print(f"Cannot connect to {device_id} for cache clearing")
+            log("Cannot connect for cache clearing", device_id, "ERROR")
             return False
         
         # Clear app data and cache
@@ -1785,14 +1814,14 @@ async def clear_app_cache(device_id: str) -> bool:
         )
         
         if "Success" in result.stdout:
-            print(f"Successfully cleared Pokemon GO cache on {device_id}")
+            log("Successfully cleared Pokemon GO cache", device_id, "UPDATE")
             return True
         else:
-            print(f"Failed to clear Pokemon GO cache on {device_id}: {result.stderr}")
+            log(f"Failed to clear Pokemon GO cache: {result.stderr}", device_id, "ERROR")
             return False
             
     except Exception as e:
-        print(f"Error clearing cache on {device_id}: {str(e)}")
+        log(f"Error clearing cache: {str(e)}", device_id, "ERROR")
         return False
     
 async def uninstall_pogo(device_id: str) -> bool:
@@ -1808,10 +1837,10 @@ async def uninstall_pogo(device_id: str) -> bool:
     device_id = format_device_id(device_id)
     
     try:
-        print(f"Uninstalling Pokemon GO on {device_id}")
-        
+        log("Uninstalling Pokemon GO", device_id, "UPDATE")
+
         if not adb_pool.ensure_connected(device_id):
-            print(f"Cannot connect to {device_id} for uninstallation")
+            log("Cannot connect for uninstallation", device_id, "ERROR")
             return False
         
         # Uninstall the app
@@ -1822,14 +1851,14 @@ async def uninstall_pogo(device_id: str) -> bool:
         )
         
         if "Success" in result.stdout:
-            print(f"Successfully uninstalled Pokemon GO on {device_id}")
+            log("Successfully uninstalled Pokemon GO", device_id, "UPDATE")
             return True
         else:
-            print(f"Failed to uninstall Pokemon GO on {device_id}: {result.stderr}")
+            log(f"Failed to uninstall Pokemon GO: {result.stderr}", device_id, "ERROR")
             return False
             
     except Exception as e:
-        print(f"Error uninstalling app on {device_id}: {str(e)}")
+        log(f"Error uninstalling app: {str(e)}", device_id, "ERROR")
         return False
 
 async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> bool:
@@ -1855,7 +1884,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Find APK files
         apk_files = list(extract_dir.glob("*.apk"))
         if not apk_files:
-            print(f"No APK files found in {extract_dir}")
+            log(f"No APK files found in {extract_dir}", device_ip, "ERROR")
             clear_device_update_status(device_ip)
             return False
             
@@ -1872,7 +1901,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         ]
         
         for strategy_name, recovery_action, progress_target in strategies:
-            print(f"Attempting {strategy_name} installation on {device_ip}")
+            log(f"Attempting {strategy_name} installation", device_ip, "UPDATE")
             
             # Execute recovery action if needed
             if recovery_action:
@@ -1896,7 +1925,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     update_progress(45)
                 
                 if not recovery_success:
-                    print(f"Recovery action {strategy_name} failed on {device_ip}")
+                    log(f"Recovery action {strategy_name} failed", device_ip, "ERROR")
                     continue
             
             # Try installation
@@ -1904,11 +1933,11 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             update_progress(progress_target)
             
             if installation_success:
-                print(f"{strategy_name.title()} installation successful on {device_ip}")
+                log(f"{strategy_name.title()} installation successful", device_ip, "UPDATE")
                 break
             elif error_msg != "INSUFFICIENT_STORAGE":
                 # Non-storage error, don't continue with other strategies
-                print(f"Installation failed with non-storage error on {device_ip}: {error_msg}")
+                log(f"Installation failed with non-storage error: {error_msg}", device_ip, "ERROR")
                 break
         
         # Handle final failure
@@ -1931,15 +1960,15 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             update_progress(70)
             
             # Start app
-            print(f"Starting app on {device_ip} after update... (Control enabled: {control_enabled})")
+            log(f"Starting app after update (Control: {control_enabled})", device_ip, "UPDATE")
             start_result = await optimized_app_start(device_ip, control_enabled)
             
             if start_result:
-                print(f"Successfully started app on {device_ip} after update")
+                log("App started after update", device_ip, "UPDATE")
                 # Send success notification
                 await notify_update_installed(device_name, device_ip, "Pokemon GO", version)
             else:
-                print(f"Failed to start app on {device_ip} after update")
+                log("Failed to start app after update", device_ip, "ERROR")
                 await send_discord_notification(
                     message=f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
                     title="Installation OK, Startup Failed",
@@ -1966,7 +1995,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         return False
             
     except Exception as e:
-        print(f"Installation process error for {device_ip}: {str(e)}")
+        log(f"Installation process error: {str(e)}", device_ip, "ERROR")
         # Notify of general errors
         try:
             device_details = get_device_details(device_ip)
@@ -1992,26 +2021,26 @@ async def optimized_pogo_update_task():
         try:
             config = load_config()
             
-            print("ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â Checking for PoGO updates...")
+            log("Checking for PoGO updates...", None, "UPDATE")
             
             # Get versions and download latest version
             get_available_versions.cache_clear()
             versions = get_available_versions()
             
             if not versions.get("latest"):
-                print("ÃƒÂ¢Ã‚ÂÃ…â€™ No valid PoGO version available, skipping check.")
+                log("No valid PoGO version available, skipping check", None, "UPDATE")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions["latest"]["version"]
-            print(f"ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…â€™ Latest available PoGO version: {latest_version}")
+            log(f"Latest available PoGO version: {latest_version}", None, "VERSION")
             
             # Always download latest version
             ensure_latest_apk_downloaded()
             
             # Check if auto updates are enabled
             if not config.get("pogo_auto_update_enabled", True):
-                print("PoGO auto-update is disabled in configuration. Updates downloaded but not installed.")
+                log("PoGO auto-update disabled, updates downloaded but not installed", None, "UPDATE")
                 await asyncio.sleep(3 * 3600)
                 continue
             
@@ -2031,7 +2060,7 @@ async def optimized_pogo_update_task():
             
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ Installing PoGO version {latest_version} on {update_count} devices that need updates")
+                log(f"Installing PoGO {latest_version} on {update_count} devices", None, "UPDATE")
                 
                 # Process each device
                 for device_id in devices_to_update:
@@ -2039,15 +2068,15 @@ async def optimized_pogo_update_task():
                     # Mark device for version refresh
                     version_manager.mark_for_refresh(device_id)
                 
-                print("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ PoGO automatic update complete")
+                log("PoGO automatic update complete", None, "UPDATE")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ All devices already have the latest version. No updates needed.")
+                log("All devices already have latest version, no updates needed", None, "UPDATE")
             
         except Exception as e:
-            print(f"ÃƒÂ¢Ã‚ÂÃ…â€™ PoGO Auto-Update Error: {str(e)}")
+            log(f"PoGO Auto-Update Error: {str(e)}", None, "ERROR")
             import traceback
             traceback.print_exc()
             
@@ -3283,7 +3312,7 @@ def clear_github_api_cache():
     """Clears the GitHub API cache to force fresh data on next request"""
     global github_api_cache
     github_api_cache.clear()
-    print("GitHub API cache cleared")
+    log("GitHub API cache cleared", None, "CONFIG")
 
 async def fetch_available_module_versions(module_type="fork"):
     """Fetches available PlayIntegrityFork versions from GitHub API with caching"""
@@ -3294,7 +3323,7 @@ async def fetch_available_module_versions(module_type="fork"):
     if cache_key in github_api_cache:
         cached_data, timestamp = github_api_cache[cache_key]
         if current_time - timestamp < GITHUB_CACHE_TTL:
-            print(f"Using cached FORK versions (cached {int((current_time - timestamp)/60)} minutes ago)")
+            log(f"Using cached FORK versions ({int((current_time - timestamp)/60)}min old)", None, "VERSION")
             return cached_data
     
     api_url = PIF_GITHUB_API
@@ -3309,7 +3338,7 @@ async def fetch_available_module_versions(module_type="fork"):
     for attempt in range(max_retries):
         try:
             timeout = timeout_values[attempt]
-            print(f"Fetching {module_type.upper()} releases from GitHub API (attempt {attempt + 1}/{max_retries})...")
+            log(f"Fetching {module_type.upper()} releases from GitHub (attempt {attempt + 1}/{max_retries})", None, "API")
             
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -3330,7 +3359,7 @@ async def fetch_available_module_versions(module_type="fork"):
                     try:
                         releases = response.json()
                         if not releases or not isinstance(releases, list):
-                            print(f"Empty or invalid releases data on attempt {attempt + 1}")
+                            log(f"Empty or invalid releases data (attempt {attempt + 1})", None, "API")
                             if attempt < max_retries - 1:
                                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
                                 continue
@@ -3373,44 +3402,44 @@ async def fetch_available_module_versions(module_type="fork"):
                         
                         if versions:
                             versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
-                            print(f"Successfully fetched {len(versions)} {module_type.upper()} versions")
+                            log(f"Fetched {len(versions)} {module_type.upper()} versions", None, "VERSION")
                             # Cache the successful result
                             github_api_cache[cache_key] = (versions, current_time)
                             return versions
                         else:
-                            print(f"No valid releases found on attempt {attempt + 1}")
+                            log(f"No valid releases found (attempt {attempt + 1})", None, "API")
                             
                     except (json.JSONDecodeError, KeyError, TypeError) as e:
-                        print(f"Invalid API response format on attempt {attempt + 1}: {str(e)}")
+                        log(f"Invalid API response format (attempt {attempt + 1}): {str(e)}", None, "ERROR")
                         
                 elif response.status_code == 403:
-                    print(f"GitHub API rate limit exceeded (attempt {attempt + 1})")
+                    log(f"GitHub API rate limit exceeded (attempt {attempt + 1})", None, "API")
                     if attempt < max_retries - 1:
-                        print("Waiting 5 minutes before retry to respect rate limit (60 requests per hour)...")
+                        log("Waiting 5 minutes before retry (rate limit)", None, "API")
                         await asyncio.sleep(300)  # Wait 5 minutes for rate limit reset
                         continue
                         
                 elif response.status_code == 404:
-                    print(f"GitHub repository not found: {api_url}")
+                    log(f"GitHub repository not found: {api_url}", None, "ERROR")
                     return []  # Don't retry for 404
                     
                 else:
-                    print(f"GitHub API HTTP {response.status_code} on attempt {attempt + 1}")
+                    log(f"GitHub API HTTP {response.status_code} (attempt {attempt + 1})", None, "API")
                 
         except (httpx.TimeoutException, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
-            print(f"Network timeout on attempt {attempt + 1}: {str(e)}")
+            log(f"Network timeout (attempt {attempt + 1}): {str(e)}", None, "ERROR")
         except (httpx.HTTPError, httpx.RequestError) as e:
-            print(f"Network error on attempt {attempt + 1}: {str(e)}")
+            log(f"Network error (attempt {attempt + 1}): {str(e)}", None, "ERROR")
         except Exception as e:
-            print(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
+            log(f"Unexpected error (attempt {attempt + 1}): {str(e)}", None, "ERROR")
         
         # Wait before retry (except on last attempt)
         if attempt < max_retries - 1:
             wait_time = 2 ** attempt
-            print(f"Retrying in {wait_time} seconds...")
+            log(f"Retrying in {wait_time} seconds...", None, "API")
             await asyncio.sleep(wait_time)
     
-    print(f"Failed to fetch {module_type.upper()} versions after {max_retries} attempts")
+    log(f"Failed to fetch {module_type.upper()} versions after {max_retries} attempts", None, "ERROR")
     return []
 
 async def fetch_available_pif_versions():
@@ -3431,10 +3460,10 @@ async def download_module_version(version_info):
         module_path = module_dir / filename
         
         if module_path.exists():
-            print(f"FORK version {version} already downloaded at {module_path}")
+            log(f"FORK version {version} already downloaded", None, "UPDATE")
             return module_path
         
-        print(f"Downloading FORK version {version} from {download_url}")
+        log(f"Downloading FORK version {version}", None, "UPDATE")
         async with httpx.AsyncClient(follow_redirects=True) as client:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -3445,27 +3474,27 @@ async def download_module_version(version_info):
             download_response = await client.get(download_url, headers=headers, timeout=30)
             
             if download_response.status_code != 200:
-                print(f"Download failed with status code: {download_response.status_code}")
+                log(f"Download failed with status code: {download_response.status_code}", None, "ERROR")
                 return None
                 
             content_type = download_response.headers.get("content-type", "").lower()
             if "html" in content_type:
-                print(f"GitHub returned HTML instead of ZIP file. Using alternative download method...")
+                log("GitHub returned HTML instead of ZIP, using alternative method", None, "API")
                 
                 direct_url = download_url.replace("/api.github.com/repos/", "/github.com/")
                 direct_url = direct_url.replace("/releases/assets/", "/releases/download/v")
                 direct_url = direct_url.replace("/download/v", "/download/v" + version + "/")
                 
-                print(f"Trying alternative URL: {direct_url}")
+                log(f"Trying alternative URL: {direct_url}", None, "API")
                 alt_response = await client.get(direct_url, headers=headers, timeout=30)
                 
                 if alt_response.status_code != 200:
-                    print(f"Alternative download failed with status code: {alt_response.status_code}")
+                    log(f"Alternative download failed: {alt_response.status_code}", None, "ERROR")
                     return None
                     
                 content_type = alt_response.headers.get("content-type", "").lower()
                 if "html" in content_type:
-                    print(f"Alternative method also returned HTML. Unable to download ZIP file.")
+                    log("Alternative method also returned HTML, unable to download ZIP", None, "ERROR")
                     return None
                     
                 download_response = alt_response
@@ -3474,15 +3503,15 @@ async def download_module_version(version_info):
                 f.write(download_response.content)
             
             if not zipfile.is_zipfile(module_path):
-                print("Downloaded file is not a valid ZIP")
+                log("Downloaded file is not a valid ZIP", None, "ERROR")
                 module_path.unlink()
                 return None
         
-        print(f"Successfully downloaded FORK version {version} to {module_path}")
+        log(f"Downloaded FORK version {version}", None, "UPDATE")
         return module_path
         
     except Exception as e:
-        print(f"Error downloading FORK version {version}: {str(e)}")
+        log(f"Error downloading FORK version {version}: {str(e)}", None, "ERROR")
         traceback.print_exc()
         return None
 
@@ -3522,27 +3551,27 @@ async def optimized_module_update_task():
         try:
             config = load_config()
             
-            print("Checking for PlayIntegrityFork updates...")
+            log("Checking for PlayIntegrityFork updates...", None, "UPDATE")
 
             versions = await fetch_available_module_versions("fork")
             if not versions:
-                print("No valid FORK versions available, skipping check.")
+                log("No valid FORK versions available, skipping check", None, "UPDATE")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions[0]
             new_version = latest_version["version"]
 
-            print(f"Latest FORK version available: {new_version}")
+            log(f"Latest FORK version available: {new_version}", None, "VERSION")
                 
             module_path = await download_module_version(latest_version)
             if not module_path:
-                print("Failed to download module, skipping update")
+                log("Failed to download module, skipping update", None, "ERROR")
                 await asyncio.sleep(3 * 3600)
                 continue
 
             if not config.get("pif_auto_update_enabled", True):
-                print("FORK auto-update is disabled in configuration. Module downloaded but not installed.")
+                log("FORK auto-update disabled, module downloaded but not installed", None, "UPDATE")
                 await asyncio.sleep(3 * 3600)
                 continue
 
@@ -3555,27 +3584,27 @@ async def optimized_module_update_task():
                 
                 connected, error = check_adb_connection(device_id)
                 if not connected:
-                    print(f"Device {device_id} not reachable via ADB, skipping update check: {error}")
+                    log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
                     continue
                     
                 version_info = version_manager.get_version_info(device_id, force_refresh=False)
                 
                 if not version_info:
-                    print(f"No version information available for {device_id}")
+                    log("No version information available", device_id, "VERSION")
                     continue
                     
                 installed_module = version_info.get("module_version", "N/A").strip()
                 
                 # Skip devices without any module installed
                 if installed_module == "N/A":
-                    print(f"No PlayIntegrity module found on {device_id}, skipping")
+                    log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
                     continue
                     
                 module_is_fork = "Fork" in installed_module
                 
                 # Skip devices with Fix module - only update Fork devices
                 if not module_is_fork:
-                    print(f"Device {device_id} has Fix module, skipping (only Fork devices are updated)")
+                    log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
                     continue
                 
                 # Extract and compare versions
@@ -3588,7 +3617,7 @@ async def optimized_module_update_task():
                         new_tuple = parse_version(new_version)
                         
                         if current_tuple < new_tuple:
-                            print(f"Update needed for {device_id}: {current_version} -> {new_version}")
+                            log(f"Update needed: {current_version} -> {new_version}", device_id, "UPDATE")
                             devices_to_update.append(device_id)
                     except (ValueError, AttributeError):
                         devices_to_update.append(device_id)
@@ -3597,28 +3626,28 @@ async def optimized_module_update_task():
 
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"Installing FORK version {new_version} on {update_count} devices")
+                log(f"Installing FORK {new_version} on {update_count} devices", None, "UPDATE")
                 
                 for device_id in devices_to_update:
                     try:
-                        print(f"Updating device {device_id} to FORK version {new_version}")
+                        log(f"Updating to FORK {new_version}", device_id, "UPDATE")
                         await install_module_with_progress(device_id, module_path, "fork")
                         
                         # Mark device for version refresh
                         version_manager.mark_for_refresh(device_id)
 
                     except Exception as e:
-                        print(f"Error installing module on {device_id}: {str(e)}")
+                        log(f"Error installing module: {str(e)}", device_id, "ERROR")
                 
-                print("FORK update complete")
+                log("FORK update complete", None, "UPDATE")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("All devices already have the latest version. No updates needed.")
+                log("All devices already have latest version, no updates needed", None, "UPDATE")
 
         except Exception as e:
-            print(f"Module Auto-Update Error: {str(e)}")
+            log(f"Module Auto-Update Error: {str(e)}", None, "ERROR")
             import traceback
             traceback.print_exc()
 
@@ -3640,7 +3669,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         mark_device_in_update(device_ip, f"pif-{module_type}")
         
         device_id = format_device_id(device_ip)
-        print(f"Starting {module_type.upper()} module installation for {device_ip}")
+        log(f"Starting {module_type.upper()} module installation", device_ip, "UPDATE")
         
         update_progress(5)
         
@@ -3648,19 +3677,19 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         config = load_config()
         device_in_config = any(dev["ip"] == device_id for dev in config.get("devices", []))
         if not device_in_config:
-            print(f"Device {device_id} not found in config, aborting module installation")
+            log("Not found in config, aborting module installation", device_id, "ERROR")
             cleanup_installation()
             return False
         
         update_progress(10)
         
         if not adb_pool.ensure_connected(device_id):
-            print(f"Cannot connect to {device_id} for module installation")
+            log("Cannot connect for module installation", device_id, "ERROR")
             cleanup_installation()
             return False
         
         if module_path is None or not Path(module_path).exists():
-            print(f"Module file not found at {module_path}")
+            log(f"Module file not found at {module_path}", device_id, "ERROR")
             cleanup_installation()
             return False
         
@@ -3676,7 +3705,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         update_progress(15)
         
         # Remove existing modules (no reboot needed)
-        print(f"Removing existing modules on {device_id}")
+        log("Removing existing modules", device_id, "UPDATE")
         adb_pool.execute_command(
             device_id,
             ["adb", "shell", "su -c 'rm -rf /data/adb/modules/playintegrityfix'"]
@@ -3687,7 +3716,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         update_progress(25)
-        print(f"Pushing {module_type.upper()} module to {device_id}")
+        log(f"Pushing {module_type.upper()} module", device_id, "UPDATE")
         
         push_result = adb_pool.execute_command(
             device_id,
@@ -3695,12 +3724,12 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if push_result.returncode != 0:
-            print(f"Failed to push module to device: {push_result.stderr}")
+            log(f"Failed to push module: {push_result.stderr}", device_id, "ERROR")
             cleanup_installation()
             return False
         
         update_progress(40)
-        print(f"Installing {module_type.upper()} module on {device_id}")
+        log(f"Installing {module_type.upper()} module", device_id, "UPDATE")
         
         # First check if Magisk is installed and available
         magisk_check = adb_pool.execute_command(
@@ -3709,7 +3738,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if magisk_check.returncode != 0 or "not found" in magisk_check.stderr:
-            print(f"Magisk not available on device {device_id}: {magisk_check.stderr}")
+            log(f"Magisk not available: {magisk_check.stderr}", device_id, "ERROR")
             cleanup_installation()
             return False
         
@@ -3720,7 +3749,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if install_result.returncode != 0:
-            print(f"Module installation failed: {install_result.stderr}")
+            log(f"Module installation failed: {install_result.stderr}", device_id, "ERROR")
             cleanup_installation()
             return False
         
@@ -3734,7 +3763,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if verify_result.returncode != 0 or "No such file" in verify_result.stderr:
-            print(f"Module directory not found after installation: {verify_result.stderr}")
+            log(f"Module directory not found after installation: {verify_result.stderr}", device_id, "ERROR")
             cleanup_installation()
             return False
         
@@ -3745,27 +3774,27 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         update_progress(70)
-        print(f"Rebooting {device_id} to apply {module_type.upper()} module")
+        log(f"Rebooting to apply {module_type.upper()} module", device_id, "UPDATE")
         
         adb_pool.execute_command(device_id, ["adb", "reboot"])
 
         # Wait for device to come back online after reboot
-        print(f"Waiting for device {device_id} to come back online after reboot...")
+        log("Waiting for device to come back online after reboot", device_id, "UPDATE")
         device_back_online = False
         for i in range(30):  # 5 minutes timeout
             await asyncio.sleep(10)
             update_progress(70 + (i * 0.8))  # Progress from 70 to 94
             try:
                 if adb_pool.ensure_connected(device_id):
-                    print(f"Device {device_id} is back online after reboot")
+                    log("Back online after reboot", device_id, "UPDATE")
                     device_back_online = True
                     break
             except Exception as e:
-                print(f"Error checking device connectivity: {str(e)}")
+                log(f"Error checking connectivity: {str(e)}", device_id, "ERROR")
                 continue
                 
         if not device_back_online:
-            print(f"Device {device_id} did not come back online after reboot. Installation status uncertain.")
+            log("Did not come back online after reboot, installation status uncertain", device_id, "ERROR")
             cleanup_installation()
             return False
             
@@ -3781,7 +3810,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if final_verify.returncode != 0 or "No such file" in final_verify.stderr:
-            print(f"Module appears to be not properly installed after reboot: {final_verify.stderr}")
+            log(f"Module not properly installed after reboot: {final_verify.stderr}", device_id, "ERROR")
             cleanup_installation()
             return False
             
@@ -3791,11 +3820,11 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         )
         
         if "disabled" in module_enabled.stdout:
-            print(f"Warning: Module is installed but appears to be disabled")
+            log("Warning: Module is installed but appears to be disabled", device_id, "UPDATE")
         
         device_status_cache.clear()
         version_manager.mark_for_refresh(device_id)
-        print(f"FORK update successfully completed for {device_id}")
+        log("FORK update successfully completed", device_id, "UPDATE")
         
         # Clear GitHub API cache to ensure fresh version info on next check
         clear_github_api_cache()
@@ -3816,7 +3845,7 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         return True
     
     except Exception as e:
-        print(f"Module Installation error for {device_ip}: {str(e)}")
+        log(f"Module installation error: {str(e)}", device_ip, "ERROR")
         traceback.print_exc()
         cleanup_installation()
         return False
@@ -3844,7 +3873,7 @@ def parse_version(v: str):
             parts.append(0)
         return tuple(parts)
     except Exception as e:
-        print(f"Error parsing version '{v}': {e}")
+        log(f"Error parsing version '{v}': {e}", None, "ERROR")
         return ()
 
 # Optimized Device Monitoring
@@ -3876,13 +3905,13 @@ async def optimized_device_monitoring():
                 if device_id in devices_in_update and devices_in_update[device_id]["in_update"]:
                     update_type = devices_in_update[device_id]["update_type"]
                     update_duration = int(current_time - devices_in_update[device_id]["started_at"])
-                    print(f"Device {device_id} is currently undergoing a {update_type} update for {update_duration} seconds - skipping monitoring")
+                    log(f"Update in progress ({update_type}, {update_duration}s) - skipping monitoring", device_id, "MONITOR")
                     continue
                 
                 # Get current status from the status cache (populated by API updates)
                 status = device_status_cache.get(device_id, {})
                 if not status:
-                    print(f"No status data available for {device_id}, skipping monitoring")
+                    log("No status data available, skipping monitoring", device_id, "MONITOR")
                     continue
                 
                 # Extract data from the status cache
@@ -3903,7 +3932,7 @@ async def optimized_device_monitoring():
                 if was_alive is None:
                     # Initialize status without sending notifications
                     device_last_status[device_id] = {"is_alive": is_alive}
-                    print(f"Initialized status tracking for {device_id}: is_alive={is_alive}")
+                    log(f"Status tracking initialized: is_alive={is_alive}", device_id, "MONITOR")
                     # Store this status in cache without notification
                     status["last_status_change"] = current_time
                     device_status_cache[device_id] = status
@@ -3914,27 +3943,27 @@ async def optimized_device_monitoring():
                 if was_alive and not is_alive:
                     # Check if we need to send notification (respect cooldown)
                     if current_time - last_offline_notification > notification_cooldown:
-                        print(f"Device {display_name} ({device_id}) went offline - sending notification")
+                        log("Offline - notification sent", device_id, "MONITOR")
                         await notify_device_offline(display_name, device_id)
                         
                         # Update notification timestamp
                         status["last_offline_notification"] = current_time
                         device_status_cache[device_id] = status
                     else:
-                        print(f"Device {display_name} ({device_id}) offline notification in cooldown")
+                        log("Offline notification in cooldown", device_id, "MONITOR")
                 
                 # Device just came back online
                 elif not was_alive and is_alive:
                     # Check if we need to send notification (respect cooldown)
                     if current_time - last_online_notification > notification_cooldown:
-                        print(f"Device {display_name} ({device_id}) came back online - sending notification")
+                        log("Online - notification sent", device_id, "MONITOR")
                         await notify_device_online(display_name, device_id)
                         
                         # Update notification timestamp
                         status["last_online_notification"] = current_time
                         device_status_cache[device_id] = status
                     else:
-                        print(f"Device {display_name} ({device_id}) online notification in cooldown")
+                        log("Online notification in cooldown", device_id, "MONITOR")
                 
                 # Format runtime for display
                 runtime_formatted = format_runtime(runtime) if runtime is not None else "N/A"
@@ -3943,26 +3972,14 @@ async def optimized_device_monitoring():
                 # Format memory value
                 mem_mb = mem_free / 1024 if mem_free > 0 else 0
                 
-                # Print detailed status information
-                status_emoji = "âœ“" if is_alive else "âœ—"
-                memory_status = f"{mem_mb:.2f} MB / {device.get('memory_threshold', 200)} MB"
-                
-                # Create detailed status line 
-                status_line = (
-                    f"Device {display_name} ({device_id}): "
-                    f"API Status: {status_emoji} | "
-                    f"Memory: {memory_status} | "
-                    f"Runtime: {runtime_formatted}"
-                )
-                
-                # Add last runtime if available
-                if last_runtime is not None:
-                    status_line += f" | Last Runtime: {last_runtime_formatted}"
-                    
-                print(status_line)
+                # Format status for log output
+                status_text = "OK" if is_alive else "OFFLINE"
+                memory_status = f"{mem_mb:.2f}/{device.get('memory_threshold', 200)}MB"
+
+                log(f"Status: {status_text} | Mem: {memory_status} | Runtime: {runtime_formatted}" + (f" | Last: {last_runtime_formatted}" if last_runtime is not None else ""), device_id, "MONITOR")
                 
                 if not adb_status:
-                    print(f"  - Device not reachable via ADB, skipping monitoring")
+                    log("ADB not reachable, skipping monitoring", device_id, "MONITOR")
                     continue
                 
                 # Check if restart is needed
@@ -3987,7 +4004,7 @@ async def optimized_device_monitoring():
                         device_status_cache[device_id] = status
                     else:
                         # Memory is below threshold but not critically low
-                        print(f"  - Memory is below threshold but not critically low")
+                        log("Memory below threshold but not critical", device_id, "MONITOR")
                 
                 # Always check if the device was restarted recently to avoid restart loops
                 last_restart_time = status.get("last_restart_time", 0)
@@ -3996,31 +4013,31 @@ async def optimized_device_monitoring():
                 
                 if restart_needed and time_since_last_restart < min_restart_interval:
                     minutes_to_wait = (min_restart_interval - time_since_last_restart) / 60
-                    print(f"  - Device needs restart but was restarted {time_since_last_restart:.0f} seconds ago - waiting {minutes_to_wait:.1f} more minutes")
+                    log(f"Restart needed but restarted {time_since_last_restart:.0f}s ago - waiting {minutes_to_wait:.1f} min", device_id, "MONITOR")
                     restart_needed = False
                 
                 # Handle restart if needed
                 if restart_needed:
-                    print(f"  - Restarting device - Reason: {restart_reason}")
+                    log(f"Restart: {restart_reason}", device_id, "MONITOR")
                     success = await optimized_app_start(device_id, True)
                     
                     # Record restart time
                     device_status_cache[device_id]["last_restart_time"] = current_time
                     
                     if success:
-                        print(f"  - Successfully restarted apps")
+                        log("Apps restarted successfully", device_id, "MONITOR")
                         # Important: Update the status in the cache
                         device_status_cache[device_id]["is_alive"] = True
                         
                         # This is a system restart, not a status change from the API
                         # If it was offline before, we should send "back online" notification
                         if not was_alive:
-                            print(f"  - Sending online notification after successful restart")
+                            log("Online notification sent after restart", device_id, "MONITOR")
                             await notify_device_online(display_name, device_id)
                             status["last_online_notification"] = current_time
                             device_status_cache[device_id] = status
                     else:
-                        print(f"  - Failed to restart apps")
+                        log("App restart failed", device_id, "ERROR")
                 
                 # Always update last status to track changes
                 device_last_status[device_id] = {
@@ -4032,7 +4049,7 @@ async def optimized_device_monitoring():
             await ws_manager.broadcast(status_data)
                 
         except Exception as e:
-            print(f"Error in API-based device monitoring: {str(e)}")
+            log(f"Monitoring error: {str(e)}", None, "ERROR")
             traceback.print_exc()
         
         # Wait until next check
@@ -4058,20 +4075,20 @@ async def perform_installations(device_ips: List[str], extract_dir: Path):
                 end_progress = int(index * device_increment)
                 
                 update_progress(start_progress)
-                print(f"Starting update for device {index}/{total_devices}: {ip}")
+                log(f"Update {index}/{total_devices} started", ip, "UPDATE")
                 
                 # Run installation with progress tracking
                 success = await optimized_perform_installation(ip, extract_dir)
                 
                 if success:
-                    print(f"Successfully updated {ip}")
+                    log("Update successful", ip, "UPDATE")
                 else:
-                    print(f"Failed to update {ip}")
+                    log("Update failed", ip, "ERROR")
                 
                 update_progress(end_progress)
                 
             except Exception as e:
-                print(f"Error updating {ip}: {str(e)}")
+                log(f"Update error: {str(e)}", ip, "ERROR")
                 update_progress(int(index * device_increment))
                 clear_device_update_status(ip)
         
@@ -4099,7 +4116,7 @@ async def update_api_status():
             
             # Check if the required API configuration exists
             if not all(key in config for key in ["rotomApiUrl", "rotomApiUser", "rotomApiPass"]):
-                print("API configuration incomplete, skipping check")
+                log("API configuration incomplete, skipping check", None, "API")
                 await asyncio.sleep(60)
                 continue
                 
@@ -4113,14 +4130,14 @@ async def update_api_status():
                 
                 # Check for successful response
                 if response.status_code != 200:
-                    print(f"API returned status code {response.status_code}")
+                    log(f"API returned status code {response.status_code}", None, "API")
                     await asyncio.sleep(60)
                     continue
                     
                 try:
                     api_data = response.json()
                 except json.JSONDecodeError:
-                    print("Failed to parse API response as JSON")
+                    log("Failed to parse API response as JSON", None, "ERROR")
                     await asyncio.sleep(60)
                     continue
 
@@ -4161,7 +4178,7 @@ async def update_api_status():
                         "start_time": current_time if current_cache.get("is_alive", False) else None,
                         "last_runtime": None
                     }
-                    print(f"Initialized runtime tracking for {device_id}")
+                    log("Runtime tracking initialized", device_id, "MONITOR")
                 
                 # Add a variable to track when a device was first detected as offline
                 first_detected_offline = current_cache.get("first_detected_offline", 0)
@@ -4172,7 +4189,7 @@ async def update_api_status():
                 mem_free = new_mem_free
                 
                 if new_mem_free == 0:
-                    print(f"Memory value is 0 for {device_id} - device likely rebooting, skipping memory checks")
+                    log("Memory=0 - device likely rebooting, skipping memory checks", device_id, "MONITOR")
                 
                 # Handle isAlive status with improved grace period logic
                 current_is_alive = current_cache.get("is_alive", False)
@@ -4183,7 +4200,7 @@ async def update_api_status():
                     # Store the timestamp of first offline detection
                     if first_detected_offline == 0:
                         first_detected_offline = current_time
-                        print(f"Device {device_id} first detected offline at {datetime.datetime.fromtimestamp(current_time)}")
+                        log(f"First detected offline at {datetime.datetime.fromtimestamp(current_time).strftime('%H:%M:%S')}", device_id, "MONITOR")
                 # If device is online again, reset the offline detection timestamp
                 elif new_is_alive:
                     first_detected_offline = 0
@@ -4192,7 +4209,7 @@ async def update_api_status():
                 grace_period = 60
                 if (not new_is_alive and current_is_alive and first_detected_offline > 0 and 
                     (current_time - first_detected_offline < grace_period)):
-                    print(f"Device {device_id} reported not alive but in grace period (since {int(current_time - first_detected_offline)} seconds)")
+                    log(f"Reported not alive but in grace period ({int(current_time - first_detected_offline)}s)", device_id, "MONITOR")
                     is_alive = True
                 else:
                     # Outside grace period or never detected as offline
@@ -4200,7 +4217,7 @@ async def update_api_status():
                     
                     # If a device is now officially marked as offline (after grace period)
                     if not is_alive and current_is_alive and first_detected_offline > 0:
-                        print(f"Device {device_id} now officially offline after grace period expired ({int(current_time - first_detected_offline)} seconds)")
+                        log(f"Now officially offline after grace period ({int(current_time - first_detected_offline)}s)", device_id, "MONITOR")
                 
                 # ADB connection is checked only when needed
                 adb_status = True  # Assume connected unless proven otherwise
@@ -4227,7 +4244,7 @@ async def update_api_status():
                 # Improved offline/online transition handling
                 # If device just came back online - reset runtime counter
                 if is_alive and not prev_is_alive:
-                    print(f"Device {device_id} changed from offline to online, resetting runtime counter")
+                    log("Changed from offline to online, resetting runtime counter", device_id, "MONITOR")
                     
                     # Don't overwrite existing last_runtime when coming back online
                     # Preserve the existing last_runtime value from the cache
@@ -4235,10 +4252,10 @@ async def update_api_status():
                     
                     # Only set a new runtime if there isn't already a valid one
                     if existing_last_runtime is None and current_cache.get("runtime") is not None and current_cache.get("runtime") > 60:
-                        print(f"Storing previous runtime for {device_id}: {format_runtime(current_cache.get('runtime'))}")
+                        log(f"Storing previous runtime: {format_runtime(current_cache.get('runtime'))}", device_id, "MONITOR")
                         device_runtimes[device_id]["last_runtime"] = current_cache.get("runtime")
                     elif existing_last_runtime is not None:
-                        print(f"Preserving existing last_runtime for {device_id}: {format_runtime(existing_last_runtime)}")
+                        log(f"Preserving existing last_runtime: {format_runtime(existing_last_runtime)}", device_id, "MONITOR")
                         device_runtimes[device_id]["last_runtime"] = existing_last_runtime
                     
                     # Set new start time
@@ -4250,11 +4267,11 @@ async def update_api_status():
                 
                 # Handle online to offline transition as well
                 elif not is_alive and prev_is_alive:
-                    print(f"Device {device_id} changed from online to offline, preserving runtime")
+                    log("Changed from online to offline, preserving runtime", device_id, "MONITOR")
                     # If we have a current runtime when going offline, store it
                     previous_runtime = current_cache.get("runtime", None)
                     if previous_runtime is not None and previous_runtime > 60:
-                        print(f"Storing previous runtime for {device_id}: {format_runtime(previous_runtime)}")
+                        log(f"Storing previous runtime: {format_runtime(previous_runtime)}", device_id, "MONITOR")
                         device_runtimes[device_id]["last_runtime"] = previous_runtime
                         device_runtimes[device_id]["start_time"] = None
                 
@@ -4294,7 +4311,7 @@ async def update_api_status():
             await ws_manager.broadcast(status_data)
 
         except Exception as e:
-            print(f"API Update Error: {str(e)}")
+            log(f"API update error: {str(e)}", None, "ERROR")
             import traceback
             traceback.print_exc()
         
@@ -4349,7 +4366,7 @@ async def get_status_data():
     current_time = time.time()
     last_version_debug = getattr(get_status_data, 'last_version_debug', 0)
     if not hasattr(get_status_data, 'last_versions') or get_status_data.last_versions != (pogo_latest, pogo_previous) or current_time - last_version_debug > 300:
-        print(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous}")
+        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous}", None, "INFO")
         get_status_data.last_versions = (pogo_latest, pogo_previous)
         get_status_data.last_version_debug = current_time
     
@@ -4544,7 +4561,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        log(f"WebSocket error: {e}", None, "ERROR")
         ws_manager.disconnect(websocket)
 
 # Regular Routes
@@ -4681,12 +4698,12 @@ def settings_save(
         "discord_webhook_url": discord_webhook_url
     })
     
-    print(f"Saving settings with discord_webhook_url: {discord_webhook_url}")
+    log(f"Saving settings with discord_webhook_url", None, "CONFIG")
     
     save_config(config)
     
     test_config = load_config()
-    print(f"After save, discord_webhook_url is: {test_config.get('discord_webhook_url', 'NOT FOUND')}")
+    log(f"Settings saved successfully", None, "CONFIG")
     
     return RedirectResponse(url="/settings", status_code=302)
 
@@ -4696,7 +4713,7 @@ def add_device(request: Request, new_ip: str = Form(...)):
         return redirect
     
     device_id = format_device_id(new_ip.strip())
-    print(f"Adding device with formatted ID: {device_id}")
+    log(f"Adding device", device_id, "CONFIG")
     
     config = load_config()
     if not any(dev["ip"] == device_id for dev in config["devices"]):
@@ -4824,7 +4841,7 @@ async def pif_device_update(request: Request, device_ip: str = Form(...), versio
             return RedirectResponse(url="/status?error=Module update failed", status_code=302)
             
     except Exception as e:
-        print(f"Error updating device {device_ip} to module version {version}: {str(e)}")
+        log(f"Error updating to module version {version}: {str(e)}", device_ip, "ERROR")
         update_in_progress = False
         current_progress = 0
         return RedirectResponse(url="/status?error=Module update failed", status_code=302)
@@ -4860,7 +4877,7 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
                         }
                         break
         except Exception as e:
-            print(f"Error checking all versions: {str(e)}")
+            log(f"Error checking all versions: {str(e)}", None, "ERROR")
             return RedirectResponse(url="/status?error=Failed to check version", status_code=302)
     
     if not target_version:
@@ -4882,7 +4899,7 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
         else:
             return RedirectResponse(url="/status?error=Update failed", status_code=302)
     except Exception as e:
-        print(f"Error updating device {device_ip} to version {version}: {str(e)}")
+        log(f"Error updating to version {version}: {str(e)}", device_ip, "ERROR")
         return RedirectResponse(url="/status?error=Update failed", status_code=302)
 
 @app.post("/pogo/update", response_class=HTMLResponse)
@@ -4980,7 +4997,7 @@ async def restart_apps(request: Request, device_ip: str = Form(...)):
         device = next((d for d in config["devices"] if d["ip"] == device_id), None)
         control_enabled = device and device.get("control_enabled", False)
         
-        print(f"Restarting apps on {device_id}...")
+        log("Restarting apps", device_id, "MONITOR")
         success = await optimized_app_start(device_id, control_enabled)
         
         if success:
@@ -4988,7 +5005,7 @@ async def restart_apps(request: Request, device_ip: str = Form(...)):
         else:
             return RedirectResponse(url="/status?error=Failed to restart apps", status_code=302)
     except Exception as e:
-        print(f"Error restarting apps on {device_id}: {str(e)}")
+        log(f"Error restarting apps: {str(e)}", device_id, "ERROR")
         return RedirectResponse(url="/status?error=Failed to restart apps", status_code=302)
 
 @app.post("/devices/reboot", response_class=HTMLResponse)
@@ -5002,13 +5019,13 @@ def reboot_device(request: Request, device_ip: str = Form(...)):
         device_details = get_device_details(device_id)
         display_name = device_details.get("display_name", device_id.split(":")[0] if ":" in device_id else device_id)
         
-        print(f"Rebooting device {device_id}...")
+        log("Rebooting device", device_id, "MONITOR")
         
         adb_pool.execute_command(device_id, ["adb", "reboot"])
         
         return RedirectResponse(url="/status?success=Reboot command sent", status_code=302)
     except Exception as e:
-        print(f"Error rebooting device {device_id}: {str(e)}")
+        log(f"Error rebooting device: {str(e)}", device_id, "ERROR")
         return RedirectResponse(url="/status?error=Failed to reboot device", status_code=302)
 
 @app.websocket("/ws/htmx/status")
