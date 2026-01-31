@@ -1941,7 +1941,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             else:
                 print(f"Failed to start app on {device_ip} after update")
                 await send_discord_notification(
-                    message=f"Ã¢Å¡Â Ã¯Â¸Â Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
+                    message=f"ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
                     title="Installation OK, Startup Failed",
                     color=DISCORD_COLOR_ORANGE
                 )
@@ -1992,19 +1992,19 @@ async def optimized_pogo_update_task():
         try:
             config = load_config()
             
-            print("Ã°Å¸â€Â Checking for PoGO updates...")
+            print("ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â Checking for PoGO updates...")
             
             # Get versions and download latest version
             get_available_versions.cache_clear()
             versions = get_available_versions()
             
             if not versions.get("latest"):
-                print("Ã¢ÂÅ’ No valid PoGO version available, skipping check.")
+                print("ÃƒÂ¢Ã‚ÂÃ…â€™ No valid PoGO version available, skipping check.")
                 await asyncio.sleep(3 * 3600)
                 continue
                 
             latest_version = versions["latest"]["version"]
-            print(f"Ã°Å¸â€œÅ’ Latest available PoGO version: {latest_version}")
+            print(f"ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã…â€™ Latest available PoGO version: {latest_version}")
             
             # Always download latest version
             ensure_latest_apk_downloaded()
@@ -2031,7 +2031,7 @@ async def optimized_pogo_update_task():
             
             update_count = len(devices_to_update)
             if update_count > 0:
-                print(f"Ã°Å¸Å¡â‚¬ Installing PoGO version {latest_version} on {update_count} devices that need updates")
+                print(f"ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬ Installing PoGO version {latest_version} on {update_count} devices that need updates")
                 
                 # Process each device
                 for device_id in devices_to_update:
@@ -2039,15 +2039,15 @@ async def optimized_pogo_update_task():
                     # Mark device for version refresh
                     version_manager.mark_for_refresh(device_id)
                 
-                print("Ã¢Å“â€¦ PoGO automatic update complete")
+                print("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ PoGO automatic update complete")
                 
                 status_data = await get_status_data()
                 await ws_manager.broadcast(status_data)
             else:
-                print("Ã¢Å“â€¦ All devices already have the latest version. No updates needed.")
+                print("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ All devices already have the latest version. No updates needed.")
             
         except Exception as e:
-            print(f"Ã¢ÂÅ’ PoGO Auto-Update Error: {str(e)}")
+            print(f"ÃƒÂ¢Ã‚ÂÃ…â€™ PoGO Auto-Update Error: {str(e)}")
             import traceback
             traceback.print_exc()
             
@@ -2647,7 +2647,7 @@ class MapWorldUpdater:
             comparison = self.compare_versions(installed_version, new_version)
             
             if comparison < 0:
-                return True, f"Update available: {installed_version} Ã¢â€ â€™ {new_version}"
+                return True, f"Update available: {installed_version} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_version}"
             elif comparison == 0:
                 return False, f"Same version already installed: {installed_version}"
             else:
@@ -2989,7 +2989,7 @@ async def check_all_device_versions() -> Dict:
                 )
                 if comparison < 0:
                     device_result["update_available"] = True
-                    device_result["update_info"] = f"{device_result['installed_version']} Ã¢â€ â€™ {available_version}"
+                    device_result["update_info"] = f"{device_result['installed_version']} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {available_version}"
                 elif comparison == 0:
                     device_result["update_available"] = False
                     device_result["update_info"] = "Up to date"
@@ -3127,7 +3127,7 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} Ã¢â€ â€™ {new_filename}")
+        logger.info(f"Renamed {current_filename} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_filename}")
         
         return True
         
@@ -3200,7 +3200,7 @@ def quick_fix_version() -> bool:
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} Ã¢â€ â€™ {new_filename}")
+        logger.info(f"Fixed version: {current_apk.name} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_filename}")
         return True
         
     except Exception as e:
@@ -3944,7 +3944,7 @@ async def optimized_device_monitoring():
                 mem_mb = mem_free / 1024 if mem_free > 0 else 0
                 
                 # Print detailed status information
-                status_emoji = "✓" if is_alive else "✗"
+                status_emoji = "âœ“" if is_alive else "âœ—"
                 memory_status = f"{mem_mb:.2f} MB / {device.get('memory_threshold', 200)} MB"
                 
                 # Create detailed status line 
@@ -4166,16 +4166,13 @@ async def update_api_status():
                 # Add a variable to track when a device was first detected as offline
                 first_detected_offline = current_cache.get("first_detected_offline", 0)
                 
-                # Handle memory values - keep old values if new ones are 0 or null
-                current_mem_free = current_cache.get("mem_free", 0)
+                # Handle memory values - if API returns 0, device is likely rebooting
+                # Keep 0 so memory threshold checks are skipped (condition: mem_free > 0)
                 new_mem_free = device_data.get("lastMemory", {}).get("memFree", 0)
+                mem_free = new_mem_free
                 
-                # If new memory value is 0 and current value is not 0, keep the current value
-                if new_mem_free == 0 and current_mem_free > 0:
-                    print(f"Ignoring zero memory value for {device_id}, keeping previous value: {current_mem_free}")
-                    mem_free = current_mem_free
-                else:
-                    mem_free = new_mem_free
+                if new_mem_free == 0:
+                    print(f"Memory value is 0 for {device_id} - device likely rebooting, skipping memory checks")
                 
                 # Handle isAlive status with improved grace period logic
                 current_is_alive = current_cache.get("is_alive", False)
@@ -4635,7 +4632,7 @@ def status_page(request: Request):
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
             "status": check_adb_connection(ip)[0],
-            "is_alive": "Ã¢Å“â€¦" if status["is_alive"] else "Ã¢ÂÅ’",
+            "is_alive": "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦" if status["is_alive"] else "ÃƒÂ¢Ã‚ÂÃ…â€™",
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
