@@ -46,7 +46,7 @@ device_runtimes = {}
 _display_name_cache = {}
 
 def log(message: str, device_id: str = None, category: str = "INFO"):
-    """Einheitliche Log-Ausgabe mit Zeitstempel und Geräte-Zuordnung."""
+    """Unified log output with timestamp and device assignment."""
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
     if device_id:
@@ -62,7 +62,7 @@ def log(message: str, device_id: str = None, category: str = "INFO"):
     print(f"[{timestamp}] [{tag}] [{category}] {message}")
 
 def clear_display_name_cache(device_id: str = None):
-    """Cache leeren wenn display_name geändert wird."""
+    """Clear cache when display_name is changed."""
     if device_id:
         _display_name_cache.pop(format_device_id(device_id), None)
     else:
@@ -598,6 +598,7 @@ def load_config():
     config.setdefault("discord_webhook_url", "")
     config.setdefault("pif_auto_update_enabled", True)
     config.setdefault("pogo_auto_update_enabled", True)
+    config.setdefault("device_token", "")
     return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
@@ -855,8 +856,8 @@ def format_device_id(device_id: str) -> str:
 
 def read_device_furtif_config(device_id: str) -> dict:
     """
-    Reads the Furtif/Map World config.json from the device and extracts
-    all relevant settings (Rotom*, IsRotomMode, PackageName, DiscordData).
+    Reads the Furtif/Map World config from the device and extracts
+    all relevant settings using regex (works with both JSON and JS object format).
     
     Args:
         device_id: Device identifier
@@ -872,47 +873,44 @@ def read_device_furtif_config(device_id: str) -> dict:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
         
         if result.returncode == 0 and result.stdout:
-            try:
-                # Clean the output - extract only the JSON part
-                raw_output = result.stdout.strip()
+            raw_output = result.stdout.strip()
+            
+            # Use regex to extract values (works with both JSON and JS object format)
+            # Extract DiscordData - matches both quoted and unquoted values
+            discord_match = re.search(r'DiscordData["\s]*:["\s]*([^,}\s]+)', raw_output)
+            if discord_match:
+                furtif_config["DiscordData"] = discord_match.group(1).strip().strip('"')
+            else:
+                furtif_config["DiscordData"] = ""
+            
+            # Extract RotomTryAutoStart
+            autostart_match = re.search(r'RotomTryAutoStart["\s]*:["\s]*(true|false)', raw_output, re.IGNORECASE)
+            if autostart_match:
+                furtif_config["RotomTryAutoStart"] = autostart_match.group(1).lower() == "true"
+            else:
+                furtif_config["RotomTryAutoStart"] = False
+            
+            # Extract RotomDeviceName
+            name_match = re.search(r'RotomDeviceName["\s]*:["\s]*([^,}\s]+)', raw_output)
+            if name_match:
+                furtif_config["RotomDeviceName"] = name_match.group(1).strip().strip('"')
+            
+            # Extract IsRotomMode
+            rotom_mode_match = re.search(r'IsRotomMode["\s]*:["\s]*(true|false)', raw_output, re.IGNORECASE)
+            if rotom_mode_match:
+                furtif_config["IsRotomMode"] = rotom_mode_match.group(1).lower() == "true"
+            else:
+                furtif_config["IsRotomMode"] = False
+            
+            # Extract PackageName
+            package_match = re.search(r'PackageName["\s]*:["\s]*([^,}\s]+)', raw_output)
+            if package_match:
+                furtif_config["PackageName"] = package_match.group(1).strip().strip('"')
+            else:
+                furtif_config["PackageName"] = "com.nianticlabs.pokemongo"
+            
+            log(f"Furtif config: RotomTryAutoStart={furtif_config.get('RotomTryAutoStart', False)}, DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}", device_id, "CONFIG")
                 
-                # Find the JSON object boundaries
-                json_start = raw_output.find('{')
-                json_end = raw_output.rfind('}')
-                
-                if json_start == -1 or json_end == -1 or json_end <= json_start:
-                    log("No valid JSON found in Furtif config output", device_id, "CONFIG")
-                    return furtif_config
-                
-                # Extract only the JSON part
-                json_str = raw_output[json_start:json_end + 1]
-                
-                # Remove any control characters that might break JSON parsing
-                json_str = ''.join(char for char in json_str if ord(char) >= 32 or char in '\n\r\t')
-                
-                device_config = json.loads(json_str)
-                
-                # Validate that we got a dict
-                if not isinstance(device_config, dict):
-                    log("Furtif config is not a valid dictionary", device_id, "CONFIG")
-                    return furtif_config
-                
-                # Extract all Rotom* settings
-                for key, value in device_config.items():
-                    if key.startswith("Rotom"):
-                        furtif_config[key] = value
-                
-                # Extract additional important settings
-                furtif_config["IsRotomMode"] = device_config.get("IsRotomMode", False)
-                furtif_config["PackageName"] = device_config.get("PackageName", "com.nianticlabs.pokemongo")
-                furtif_config["DiscordData"] = device_config.get("DiscordData", "")
-                
-                log(f"Furtif config: RotomTryAutoStart={furtif_config.get('RotomTryAutoStart', False)}, DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}", device_id, "CONFIG")
-                
-            except json.JSONDecodeError as e:
-                log(f"Failed to parse Furtif config.json: {e}", device_id, "ERROR")
-            except Exception as e:
-                log(f"Error processing Furtif config: {e}", device_id, "ERROR")
         else:
             log(f"Could not read Furtif config.json (returncode={result.returncode})", device_id, "CONFIG")
             
@@ -922,6 +920,211 @@ def read_device_furtif_config(device_id: str) -> dict:
         log(f"Error reading Furtif config: {e}", device_id, "ERROR")
     
     return furtif_config
+
+def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
+    """
+    Writes the DiscordData token to the MapWorld config on the device.
+    ONLY works with valid JSON config files.
+    If the config is invalid JSON, it will be DELETED so MapWorld creates a fresh one.
+    
+    Args:
+        device_id: Device identifier
+        token: The token to write (with normal '=' characters)
+        
+    Returns:
+        Tuple[bool, str]: (success, error_message)
+        Special error: "INVALID_CONFIG_DELETED" means the config was deleted and needs recreation
+    """
+    device_id = format_device_id(device_id)
+    config_path = "/data/data/com.github.furtif.furtifformaps/files/config.json"
+    
+    try:
+        # First, read the current config from device
+        read_cmd = f'adb -s {device_id} shell "su -c \'cat {config_path}\'"'
+        result = subprocess.run(read_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode != 0 or not result.stdout:
+            return False, f"Could not read config from device: {result.stderr}"
+        
+        raw_output = result.stdout.strip()
+        
+        # Check if config has content
+        if not raw_output or '{' not in raw_output:
+            return False, "Config file is empty or invalid"
+        
+        # Find JSON boundaries
+        json_start = raw_output.find('{')
+        json_end = raw_output.rfind('}')
+        
+        if json_start == -1 or json_end == -1:
+            return False, "Could not find JSON boundaries in config"
+        
+        config_content = raw_output[json_start:json_end + 1]
+        
+        # Try to parse as JSON - ONLY accept valid JSON, no fixing attempts
+        device_config = None
+        try:
+            device_config = json.loads(config_content)
+            log("Config parsed as valid JSON", device_id, "CONFIG")
+        except json.JSONDecodeError as e:
+            log(f"Config is NOT valid JSON: {e}", device_id, "ERROR")
+            log("DELETING invalid config - MapWorld must create a new one", device_id, "CONFIG")
+            
+            # Delete the invalid config file
+            delete_cmd = f'adb -s {device_id} shell "su -c \'rm -f {config_path}\'"'
+            delete_result = subprocess.run(delete_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            
+            if delete_result.returncode == 0:
+                log("Invalid config file deleted successfully", device_id, "CONFIG")
+                return False, "INVALID_CONFIG_DELETED"
+            else:
+                return False, f"Config is invalid JSON and could not be deleted: {delete_result.stderr}"
+        
+        # At this point we have a valid device_config dict
+        # Update the DiscordData field
+        device_config["DiscordData"] = token
+        
+        # Convert back to JSON (ensure_ascii=True converts = to \u003d)
+        new_content = json.dumps(device_config, ensure_ascii=True)
+        
+        # Double-check the output is valid JSON before writing
+        try:
+            verify = json.loads(new_content)
+            if "DiscordData" not in verify:
+                return False, "Safety check failed: DiscordData missing from output"
+            log(f"Output verified: valid JSON with {len(verify)} keys", device_id, "CONFIG")
+        except json.JSONDecodeError as e:
+            return False, f"Safety check failed: Output is not valid JSON: {e}"
+        
+        # Write the new config to a temp file locally, then push to device
+        temp_local = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
+        try:
+            temp_local.write(new_content)
+            temp_local.close()
+            
+            # Push to device temp location
+            temp_remote = "/data/local/tmp/mapworld_config_temp.json"
+            push_cmd = f'adb -s {device_id} push "{temp_local.name}" {temp_remote}'
+            push_result = subprocess.run(push_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            
+            if push_result.returncode != 0:
+                return False, f"Failed to push config to device: {push_result.stderr}"
+            
+            # Move temp file to final location with root permissions
+            move_cmd = f'adb -s {device_id} shell "su -c \'cp {temp_remote} {config_path} && chmod 660 {config_path} && rm -f {temp_remote}\'"'
+            move_result = subprocess.run(move_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            
+            if move_result.returncode != 0:
+                return False, f"Failed to move config on device: {move_result.stderr}"
+            
+            log("Successfully wrote DiscordData token to device (valid JSON)", device_id, "CONFIG")
+            return True, ""
+            
+        finally:
+            # Clean up local temp file
+            try:
+                os.unlink(temp_local.name)
+            except:
+                pass
+        
+    except subprocess.TimeoutExpired:
+        return False, "Timeout while writing to device"
+    except Exception as e:
+        return False, f"Error writing token to device: {str(e)}"
+
+async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[bool, str]:
+    """
+    Ensures the device has the correct DiscordData token before starting MapWorld.
+    Compares the stored device_token with the DiscordData on the device.
+    If they don't match, writes the correct token to the device.
+    
+    Args:
+        device_id: Device identifier
+        max_retries: Number of retry attempts if writing fails
+        
+    Returns:
+        Tuple[bool, str]: (success, error_message)
+    """
+    device_id = format_device_id(device_id)
+    
+    # Load the stored token from Rotomina config
+    config = load_config()
+    stored_token = config.get("device_token", "").strip()
+    
+    # If no token is configured, skip the check
+    if not stored_token:
+        log("No device token configured, skipping token check", device_id, "CONFIG")
+        return True, ""
+    
+    # Read current config from device
+    furtif_config = read_device_furtif_config(device_id)
+    
+    if not furtif_config:
+        log("Could not read device config, will attempt to write token anyway", device_id, "CONFIG")
+        device_token = ""
+    else:
+        device_token = furtif_config.get("DiscordData", "").strip()
+    
+    # Compare tokens (both should have normal '=' after JSON parsing)
+    if device_token == stored_token:
+        log("Device token matches stored token, no update needed", device_id, "CONFIG")
+        return True, ""
+    
+    # Tokens don't match, need to write the correct token
+    log(f"Device token mismatch, updating device config", device_id, "CONFIG")
+    
+    for attempt in range(max_retries):
+        success, error = write_device_discord_token(device_id, stored_token)
+        
+        if success:
+            # Verify the write was successful
+            await asyncio.sleep(1)
+            verify_config = read_device_furtif_config(device_id)
+            if verify_config and verify_config.get("DiscordData", "").strip() == stored_token:
+                log("Token successfully written and verified", device_id, "CONFIG")
+                return True, ""
+            else:
+                log(f"Token verification failed, attempt {attempt + 1}/{max_retries}", device_id, "ERROR")
+        
+        elif error == "INVALID_CONFIG_DELETED":
+            # Special case: config was invalid JSON and has been deleted
+            # We need to start MapWorld briefly so it creates a new valid config
+            log("Invalid config was deleted, starting MapWorld to create new config", device_id, "CONFIG")
+            
+            # Start MapWorld app (just launch it, don't do full login flow)
+            start_cmd = f'adb -s {device_id} shell "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"'
+            subprocess.run(start_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            
+            # Wait for app to create config
+            log("Waiting 10 seconds for MapWorld to create new config", device_id, "CONFIG")
+            await asyncio.sleep(10)
+            
+            # Stop the app
+            stop_cmd = f'adb -s {device_id} shell "am force-stop com.github.furtif.furtifformaps"'
+            subprocess.run(stop_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            
+            await asyncio.sleep(2)
+            
+            # Now try to write the token again
+            log("Retrying token write after config recreation", device_id, "CONFIG")
+            success_retry, error_retry = write_device_discord_token(device_id, stored_token)
+            
+            if success_retry:
+                # Verify
+                await asyncio.sleep(1)
+                verify_config = read_device_furtif_config(device_id)
+                if verify_config and verify_config.get("DiscordData", "").strip() == stored_token:
+                    log("Token successfully written after config recreation", device_id, "CONFIG")
+                    return True, ""
+            
+            log(f"Token write failed after config recreation: {error_retry}", device_id, "ERROR")
+        else:
+            log(f"Failed to write token (attempt {attempt + 1}/{max_retries}): {error}", device_id, "ERROR")
+        
+        if attempt < max_retries - 1:
+            await asyncio.sleep(2)
+    
+    return False, f"Failed to update device token after {max_retries} attempts"
 
 # Optimized version of get_device_details that uses VersionManager
 def get_device_details(device_id: str) -> dict:
@@ -1110,17 +1313,23 @@ def sync_system_adb_key():
 # Optimized App Start and Login Sequence
 async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
     """
-    Optimized version of app startup that reduces ADB commands
-    by batching operations and using more efficient UI inspection.
+    Starts MapWorld and Pokemon GO on the device.
     
-    Reads Furtif config to determine startup behavior:
-    - DiscordData empty: Full Discord login flow required
-    - DiscordData present + RotomTryAutoStart=true: No interaction needed
-    - DiscordData present + RotomTryAutoStart=false: "Recheck Service Status" -> "Start service"
+    Prerequisites:
+    - Device token must be configured in Rotomina settings
+    - Token is automatically synced to device before app start
+    
+    Flow:
+    1. Verify device is in config
+    2. Ensure ADB connection
+    3. Sync device token (ensure_device_token)
+    4. Stop both apps
+    5. Start MapWorld
+    6. Execute start sequence based on RotomTryAutoStart setting
     
     Args:
         device_id: Device identifier
-        run_login: Whether to perform the login sequence
+        run_login: Whether to perform the start sequence (default: True)
         
     Returns:
         bool: True if startup successful, False otherwise
@@ -1138,6 +1347,12 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         # Ensure ADB connection
         if not adb_pool.ensure_connected(device_id):
             log("Cannot establish ADB connection, app start failed", device_id, "ERROR")
+            return False
+        
+        # Ensure device has correct token before starting app
+        token_success, token_error = await ensure_device_token(device_id)
+        if not token_success:
+            log(f"Failed to ensure device token: {token_error}", device_id, "ERROR")
             return False
         
         # Force stop both apps in one command
@@ -1177,14 +1392,14 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
                 "module_version": device.get("module_version", "N/A")
             }, furtif_config)
         
-        # Execute login sequence with Furtif config
-        login_success = await optimized_login_sequence(device_id, furtif_config=furtif_config)
+        # Execute start sequence with Furtif config
+        start_success = await optimized_login_sequence(device_id, furtif_config=furtif_config)
         
-        if login_success:
-            log("Successfully started and logged into apps", device_id, "LOGIN")
+        if start_success:
+            log("Apps started successfully", device_id, "LOGIN")
             return True
         else:
-            log("App started but login sequence failed", device_id, "ERROR")
+            log("App start sequence failed", device_id, "ERROR")
             return False
             
     except Exception as e:
@@ -1193,39 +1408,39 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
 
 async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_config: dict = None) -> bool:
     """
-    Optimized login sequence with support for Map World autostart feature.
+    Simplified start sequence for MapWorld.
     
-    Behavior based on Furtif config:
-    - DiscordData empty: Full Discord login flow required
-    - DiscordData present + RotomTryAutoStart=true: No interaction needed, just verify apps running
-    - DiscordData present + RotomTryAutoStart=false: "Recheck Service Status" -> "Start service"
+    Prerequisites:
+    - Device token must already be on the device (handled by ensure_device_token)
+    - No Discord login is needed
+    
+    Behavior based on RotomTryAutoStart:
+    - TRUE:  Wait 40 seconds for automatic startup, verify apps running
+    - FALSE: Click "Recheck Service Status" → "Start service", wait 40 seconds
+    
+    On failure (crash): Restart MapWorld and retry (max 3 attempts)
+    After all retries fail: Wait 5 minutes, then one final attempt
 
     Args:
         device_id: Device identifier
-        max_retries: Maximum number of retry attempts
-        furtif_config: Optional Furtif/Map World config settings
+        max_retries: Maximum number of retry attempts (default: 3)
+        furtif_config: MapWorld config settings (for RotomTryAutoStart)
 
     Returns:
-        bool: True if login successful, False otherwise
+        bool: True if apps started successfully, False otherwise
     """
     device_id = format_device_id(device_id)
     temp_dir = Path(tempfile.mkdtemp())
     
     # Determine startup mode from furtif_config
-    discord_data_present = bool(furtif_config and furtif_config.get("DiscordData", ""))
     autostart_enabled = furtif_config.get("RotomTryAutoStart", False) if furtif_config else False
     
-    log(f"Login sequence: DiscordData={'present' if discord_data_present else 'empty'}, RotomTryAutoStart={autostart_enabled}", device_id, "LOGIN")
+    log(f"Start sequence: RotomTryAutoStart={autostart_enabled}", device_id, "LOGIN")
 
     try:
-        # Track WebView bounds for coordinate calculation
-        webview_bounds = None
-
         async def find_and_tap_element(search_terms: list, max_attempts: int = 5,
-                                      wait_time: int = 2, partial_match: bool = False,
-                                      text_suffix: str = None, just_check: bool = False):
+                                      wait_time: int = 2, just_check: bool = False):
             """Searches UI dump for elements matching search terms and taps them"""
-            nonlocal webview_bounds
             dump_file = temp_dir / "dump.xml"
 
             for attempt in range(max_attempts):
@@ -1267,14 +1482,6 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                         await asyncio.sleep(wait_time)
                         continue
 
-                    # Check for WebView
-                    for elem in root.iter("node"):
-                        if elem.get("class") == "android.webkit.WebView":
-                            bounds = elem.get("bounds", "")
-                            match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-                            if match:
-                                webview_bounds = tuple(map(int, match.groups()))
-
                     # Search for matches
                     for elem in root.iter("node"):
                         elem_text = elem.get("text", "")
@@ -1286,12 +1493,9 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
                         found_match = False
                         for term in search_terms:
                             term_lower = term.lower()
-                            if term_lower == elem_text_lower or (partial_match and term_lower in elem_text_lower):
+                            if term_lower == elem_text_lower or term_lower in elem_text_lower:
                                 found_match = True
                                 break
-
-                        if not found_match and text_suffix and text_suffix in elem_text:
-                            found_match = True
 
                         if found_match:
                             if just_check:
@@ -1315,31 +1519,8 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
 
             return False
 
-        async def perform_swipe():
-            """Performs a swipe gesture from bottom to top"""
-            size_cmd = 'wm size'
-            result = adb_pool.execute_command(device_id, ["adb", "shell", size_cmd])
-
-            width, height = 1080, 1920
-            override_match = re.search(r'Override size:\s*(\d+)x(\d+)', result.stdout)
-            if override_match:
-                width, height = map(int, override_match.groups())
-            else:
-                physical_match = re.search(r'Physical size:\s*(\d+)x(\d+)', result.stdout)
-                if physical_match:
-                    width, height = map(int, physical_match.groups())
-
-            start_x = int(width * 0.5)
-            start_y = int(height * 0.70)
-            end_x = int(width * 0.5)
-            end_y = 1
-
-            swipe_cmd = f'input swipe {start_x} {start_y} {end_x} {end_y} 500'
-            adb_pool.execute_command(device_id, ["adb", "shell", swipe_cmd])
-            await asyncio.sleep(3)
-            return True
-
         async def check_apps_running():
+            """Checks if both PoGo and MapWorld are running"""
             check_cmd = 'pidof com.nianticlabs.pokemongo; echo "---SEPARATOR---"; pidof com.github.furtif.furtifformaps'
             result = adb_pool.execute_command(device_id, ["adb", "shell", check_cmd])
 
@@ -1349,233 +1530,83 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
 
             return pogo_running and mitm_running
 
-        async def perform_discord_login():
-            """
-            Performs the full Discord login procedure.
-            Returns True if successful, False otherwise.
-            """
-            nonlocal webview_bounds
+        async def restart_mapworld():
+            """Restarts MapWorld app"""
+            log("Restarting MapWorld", device_id, "LOGIN")
+            stop_cmd = "am force-stop com.github.furtif.furtifformaps"
+            adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
+            await asyncio.sleep(2)
             
-            log("Performing Discord authorization", device_id, "LOGIN")
-            discord_login_success = await find_and_tap_element(["Discord Login"])
+            start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
+            adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
+            await asyncio.sleep(5)
 
-            if not discord_login_success:
-                log("Failed to click Discord Login button", device_id, "ERROR")
-                return False
+        async def attempt_start():
+            """
+            Single attempt to start the apps.
+            Returns True if apps are running, False otherwise.
+            """
+            if autostart_enabled:
+                # Autostart mode: Just wait for automatic startup
+                # MapWorld waits 10 sec for user input, then starts automatically
+                log("Autostart mode - waiting 40 seconds for automatic startup", device_id, "LOGIN")
+                await asyncio.sleep(40)
+            else:
+                # Manual mode: Click buttons to start
+                log("Manual mode - clicking start buttons", device_id, "LOGIN")
+                await asyncio.sleep(5)  # Wait for UI to load
                 
-            log("Waiting for Discord authorization page", device_id, "LOGIN")
-            await asyncio.sleep(35)
-
-            # Ensure WebView loaded
-            await find_and_tap_element(["dummy"], max_attempts=2)
-
-            if webview_bounds:
-                # Handle Keep Scrolling
-                if await find_and_tap_element(["Keep Scrolling"], partial_match=True, just_check=True, max_attempts=5):
-                    await perform_swipe()
-                    await asyncio.sleep(3)
-                    await perform_swipe()
-                    await asyncio.sleep(3)
-
-                # Retry logic for Authorize button
-                authorize_text = ["Authorize", "Authorise", "Autorisieren", "Autoriser", "Autorizar", "Autorizzare"]
-                wait_times = [1, 3, 5, 5, 5]
-                authorize_success = False
-
-                for wait_time in wait_times:
-                    authorize_success = await find_and_tap_element(authorize_text, max_attempts=1, partial_match=True)
-                    if authorize_success:
-                        break
-                    log(f"Authorize button not found, waiting {wait_time}s", device_id, "LOGIN")
-                    await asyncio.sleep(wait_time)
-
-                if not authorize_success:
-                    log("Failed to click Authorize button", device_id, "ERROR")
+                recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
+                if recheck_success:
+                    await asyncio.sleep(2)
+                    start_success = await find_and_tap_element(["Start service"], max_attempts=3)
+                    if start_success:
+                        log("Clicked Start service, waiting 40 seconds", device_id, "LOGIN")
+                        await asyncio.sleep(40)
+                    else:
+                        log("Could not find 'Start service' button", device_id, "ERROR")
+                        return False
+                else:
+                    log("Could not find 'Recheck Service Status' button", device_id, "ERROR")
                     return False
+            
+            # Check if apps are running
+            if await check_apps_running():
+                log("Both apps are running successfully", device_id, "LOGIN")
+                return True
+            else:
+                log("Apps not running after wait period", device_id, "LOGIN")
+                return False
 
-                await asyncio.sleep(3)
+        # === Main retry loop ===
+        for attempt in range(max_retries):
+            log(f"Start attempt {attempt + 1}/{max_retries}", device_id, "LOGIN")
+            
+            if await attempt_start():
                 return True
             
-            return False
+            # Apps not running - restart MapWorld and try again
+            if attempt < max_retries - 1:
+                log(f"Attempt {attempt + 1} failed, restarting MapWorld", device_id, "LOGIN")
+                await restart_mapworld()
 
-        async def refresh_and_save_furtif_config():
-            """
-            Reads fresh config from device and saves it.
-            Called after successful Discord login to update the token.
-            """
-            log("Refreshing Furtif config after Discord login", device_id, "LOGIN")
-            new_config = read_device_furtif_config(device_id)
-            if new_config:
-                # Get current device info
-                config = load_config()
-                device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
-                if device:
-                    update_device_info(device_id, {
-                        "display_name": device.get("display_name", device_id),
-                        "pogo_version": device.get("pogo_version", "N/A"),
-                        "mitm_version": device.get("mitm_version", "N/A"),
-                        "module_version": device.get("module_version", "N/A")
-                    }, new_config)
-                    log("Furtif config updated with new Discord token", device_id, "LOGIN")
-                return new_config
-            return None
-
-        # === AUTOSTART MODE: DiscordData present + RotomTryAutoStart=true ===
-        if discord_data_present and autostart_enabled:
-            log("Autostart mode enabled - waiting for automatic startup", device_id, "LOGIN")
-            
-            for retry in range(max_retries):
-                log(f"Autostart verification attempt {retry+1}/{max_retries}", device_id, "LOGIN")
-                
-                # Wait for autostart to complete
-                await asyncio.sleep(30)
-                
-                # Check if apps are running
-                if await check_apps_running():
-                    log("Autostart completed successfully - both apps running", device_id, "LOGIN")
-                    return True
-                
-                # Apps not running - check if Discord Login button is visible (token expired?)
-                log("Apps not running, checking for Discord Login button", device_id, "LOGIN")
-                discord_login_visible = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
-                
-                if discord_login_visible:
-                    log("Discord Login button found - token expired! Starting login", device_id, "LOGIN")
-                    
-                    # Perform Discord login
-                    login_success = await perform_discord_login()
-                    
-                    if login_success:
-                        # Wait for Discord to process and app to save new token
-                        await asyncio.sleep(5)
-                        
-                        # Refresh and save the new config (with new DiscordData)
-                        await refresh_and_save_furtif_config()
-                        
-                        # Now continue with Recheck Service Status -> Start service
-                        # (because after fresh login, autostart won't trigger automatically)
-                        recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
-                        if recheck_success:
-                            await asyncio.sleep(2)
-                            start_success = await find_and_tap_element(["Start service"], max_attempts=3)
-                            if start_success:
-                                log("Clicked Start service, waiting for apps", device_id, "LOGIN")
-                                await asyncio.sleep(30)
-                                
-                                if await check_apps_running():
-                                    log("Login completed after token refresh", device_id, "LOGIN")
-                                    return True
-                    else:
-                        log("Discord login failed", device_id, "ERROR")
-                else:
-                    # No Discord Login button - maybe just slow, wait more
-                    if retry < max_retries - 1:
-                        log("No Discord Login button visible, waiting longer", device_id, "LOGIN")
-                        await asyncio.sleep(15)
-            
-            log(f"Autostart verification failed after {max_retries} attempts", device_id, "ERROR")
-            return False
-
-        # === MANUAL/SEMI-MANUAL MODE ===
-        # Execute login sequence
-        for retry in range(max_retries):
-            log(f"Login sequence attempt {retry+1}/{max_retries}", device_id, "LOGIN")
-
-            # Always check if Discord Login button is visible (token might be expired)
-            discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
-
-            if discord_login_present:
-                # Discord Login button found - token missing or expired
-                if discord_data_present:
-                    log("Discord Login button found but token expected - token expired!", device_id, "LOGIN")
-                else:
-                    log("Discord Login button found - performing authorization", device_id, "LOGIN")
-                
-                login_success = await perform_discord_login()
-                
-                if login_success:
-                    # Refresh and save the new config
-                    await refresh_and_save_furtif_config()
-                else:
-                    continue
-            else:
-                # No Discord Login button - token is valid or already logged in
-                if discord_data_present:
-                    log("Discord token present and valid, proceeding", device_id, "LOGIN")
-                else:
-                    log("Discord Login button not found - token already saved", device_id, "LOGIN")
-
-            # Step 5: Continue with Recheck Service Status -> Start service
-            # (This is needed when RotomTryAutoStart is false)
-            recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
-
-            if recheck_success:
-                await asyncio.sleep(2)
-                start_success = await find_and_tap_element(["Start service"], max_attempts=3)
-
-                if start_success:
-                    log("Clicked all buttons, waiting for apps to initialize", device_id, "LOGIN")
-                    await asyncio.sleep(30)
-
-                    if await check_apps_running():
-                        log("Login sequence completed successfully", device_id, "LOGIN")
-                        return True
-
-            if retry < max_retries - 1:
-                log(f"Login sequence failed, retrying {retry+2}/{max_retries}", device_id, "LOGIN")
-
-                stop_cmd = "am force-stop com.github.furtif.furtifformaps"
-                adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
-                await asyncio.sleep(2)
-
-                start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
-                adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
-                await asyncio.sleep(5)
-
-        # All retries failed - wait 5 minutes before giving up completely
-        log(f"Login failed after {max_retries} attempts, waiting 5 min for final attempt", device_id, "LOGIN")
-        await asyncio.sleep(300)  # 5 minutes delay
+        # All retries failed - wait 5 minutes before final attempt
+        log(f"All {max_retries} attempts failed, waiting 5 minutes for final attempt", device_id, "LOGIN")
+        await asyncio.sleep(300)  # 5 minutes
         
-        # One final attempt after the delay
+        # Final attempt after delay
         log("Final attempt after 5 minute delay", device_id, "LOGIN")
+        await restart_mapworld()
         
-        # Restart app fresh
-        stop_cmd = "am force-stop com.github.furtif.furtifformaps"
-        adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
-        await asyncio.sleep(2)
+        if await attempt_start():
+            log("Final attempt successful", device_id, "LOGIN")
+            return True
         
-        start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
-        adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
-        await asyncio.sleep(5)
-        
-        # Check for Discord Login one more time
-        discord_login_present = await find_and_tap_element(["Discord Login"], just_check=True, max_attempts=2)
-        
-        if discord_login_present:
-            log("Discord Login button found in final attempt - performing authorization", device_id, "LOGIN")
-            login_success = await perform_discord_login()
-            if login_success:
-                await refresh_and_save_furtif_config()
-            else:
-                log("Final login attempt failed", device_id, "ERROR")
-                return False
-        
-        # Try Recheck Service Status -> Start service
-        recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
-        if recheck_success:
-            await asyncio.sleep(2)
-            start_success = await find_and_tap_element(["Start service"], max_attempts=3)
-            if start_success:
-                await asyncio.sleep(30)
-                if await check_apps_running():
-                    log("Login sequence completed successfully on final attempt", device_id, "LOGIN")
-                    return True
-        
-        log("Login sequence failed completely", device_id, "ERROR")
+        log("Start sequence failed completely", device_id, "ERROR")
         return False
 
     except Exception as e:
-        log(f"Error in login sequence: {str(e)}", device_id, "ERROR")
+        log(f"Error in start sequence: {str(e)}", device_id, "ERROR")
         return False
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -2676,7 +2707,7 @@ class MapWorldUpdater:
             comparison = self.compare_versions(installed_version, new_version)
             
             if comparison < 0:
-                return True, f"Update available: {installed_version} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_version}"
+                return True, f"Update available: {installed_version} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_version}"
             elif comparison == 0:
                 return False, f"Same version already installed: {installed_version}"
             else:
@@ -3018,7 +3049,7 @@ async def check_all_device_versions() -> Dict:
                 )
                 if comparison < 0:
                     device_result["update_available"] = True
-                    device_result["update_info"] = f"{device_result['installed_version']} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {available_version}"
+                    device_result["update_info"] = f"{device_result['installed_version']} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {available_version}"
                 elif comparison == 0:
                     device_result["update_available"] = False
                     device_result["update_info"] = "Up to date"
@@ -3156,7 +3187,7 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_filename}")
+        logger.info(f"Renamed {current_filename} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_filename}")
         
         return True
         
@@ -3229,7 +3260,7 @@ def quick_fix_version() -> bool:
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ {new_filename}")
+        logger.info(f"Fixed version: {current_apk.name} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_filename}")
         return True
         
     except Exception as e:
@@ -4649,7 +4680,7 @@ def status_page(request: Request):
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
             "status": check_adb_connection(ip)[0],
-            "is_alive": "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦" if status["is_alive"] else "ÃƒÂ¢Ã‚ÂÃ…â€™",
+            "is_alive": "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦" if status["is_alive"] else "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢",
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
@@ -4706,6 +4737,20 @@ def settings_save(
     log(f"Settings saved successfully", None, "CONFIG")
     
     return RedirectResponse(url="/settings", status_code=302)
+
+@app.post("/settings/save-device-token", response_class=HTMLResponse)
+def save_device_token(request: Request, device_token: str = Form("")):
+    """Saves the device token to config.json"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    config["device_token"] = device_token.strip()
+    save_config(config)
+    
+    log(f"Device token saved ({len(device_token)} chars)", None, "CONFIG")
+    
+    return RedirectResponse(url="/settings?success=Device token saved successfully", status_code=302)
 
 @app.post("/devices/add", response_class=HTMLResponse)
 def add_device(request: Request, new_ip: str = Form(...)):
