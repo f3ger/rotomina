@@ -599,6 +599,7 @@ def load_config():
     config.setdefault("pif_auto_update_enabled", True)
     config.setdefault("pogo_auto_update_enabled", True)
     config.setdefault("device_token", "")
+    config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
     return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
@@ -752,6 +753,80 @@ async def notify_update_downloaded(update_type: str, version: str):
         message=message,
         title=f"New {update_type} Version Available",
         color=DISCORD_COLOR_BLUE
+    )
+
+# Token Validation Functions
+# Fixed API URL for token validation (not configurable)
+TOKEN_VALIDATION_URL = "https://protomines.ddns.net/api/access/get_access_status.php"
+
+async def validate_device_token(token: str) -> Tuple[bool, str, dict]:
+    """
+    Validates a device token against the Protomines API.
+    
+    Args:
+        token: The encoded token to validate
+        
+    Returns:
+        Tuple[bool, str, dict]: (is_valid, message, data)
+        - is_valid: True if token is valid and has access
+        - message: API response message
+        - data: Additional data from API (Access, Code, Token) or empty dict
+    """
+    if not token or not token.strip():
+        return False, "No token provided", {}
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                TOKEN_VALIDATION_URL,
+                json={"encoded_token": token.strip()},
+                headers={"Content-Type": "application/json"},
+                timeout=15
+            )
+            
+            if response.status_code != 200:
+                log(f"Token validation API returned status {response.status_code}", None, "ERROR")
+                return False, f"API error: HTTP {response.status_code}", {}
+            
+            result = response.json()
+            
+            success = result.get("success", False)
+            message = result.get("message", "Unknown response")
+            data = result.get("data", {})
+            
+            if success:
+                # Check if Access is granted
+                has_access = data.get("Access", False)
+                if has_access:
+                    log(f"Token validated successfully: {message}", None, "CONFIG")
+                    return True, message, data
+                else:
+                    log(f"Token valid but no access: {message}", None, "CONFIG")
+                    return False, "Token valid but access denied", data
+            else:
+                log(f"Token validation failed: {message}", None, "CONFIG")
+                return False, message, {}
+                
+    except httpx.TimeoutException:
+        log("Token validation timed out", None, "ERROR")
+        return False, "Validation timeout", {}
+    except json.JSONDecodeError:
+        log("Token validation returned invalid JSON", None, "ERROR")
+        return False, "Invalid API response", {}
+    except Exception as e:
+        log(f"Token validation error: {str(e)}", None, "ERROR")
+        return False, f"Validation error: {str(e)}", {}
+
+async def notify_invalid_token(device_name: str, device_ip: str, error_message: str):
+    """Sends Discord notification when device token is invalid"""
+    message = (f"**Token validation failed** for device **{device_name}** ({device_ip}).\n"
+               f"Error: {error_message}\n\n"
+               f"App startup has been blocked. Please update the device token in Rotomina settings.")
+    
+    await send_discord_notification(
+        message=message,
+        title="Invalid Device Token",
+        color=DISCORD_COLOR_RED
     )
 
 # Device update tracking functions
@@ -1035,8 +1110,8 @@ def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
 async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[bool, str]:
     """
     Ensures the device has the correct DiscordData token before starting MapWorld.
-    Compares the stored device_token with the DiscordData on the device.
-    If they don't match, writes the correct token to the device.
+    First validates the token against the API, then compares with device and syncs if needed.
+    If token validation fails, sends Discord notification and blocks app startup.
     
     Args:
         device_id: Device identifier
@@ -1055,6 +1130,24 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
     if not stored_token:
         log("No device token configured, skipping token check", device_id, "CONFIG")
         return True, ""
+    
+    # Get device details for Discord notification
+    device_details = get_device_details(device_id)
+    device_name = device_details.get("display_name", device_id.split(":")[0] if ":" in device_id else device_id)
+    
+    # Validate token against API before proceeding
+    log("Validating device token against API", device_id, "CONFIG")
+    is_valid, message, data = await validate_device_token(stored_token)
+    
+    if not is_valid:
+        log(f"Token validation failed: {message}", device_id, "ERROR")
+        
+        # Send Discord notification about invalid token
+        await notify_invalid_token(device_name, device_id, message)
+        
+        return False, f"Token validation failed: {message}"
+    
+    log(f"Token validated successfully: {message}", device_id, "CONFIG")
     
     # Read current config from device
     furtif_config = read_device_furtif_config(device_id)
@@ -4739,18 +4832,37 @@ def settings_save(
     return RedirectResponse(url="/settings", status_code=302)
 
 @app.post("/settings/save-device-token", response_class=HTMLResponse)
-def save_device_token(request: Request, device_token: str = Form("")):
-    """Saves the device token to config.json"""
+async def save_device_token(request: Request, device_token: str = Form("")):
+    """Saves the device token to config.json after validation"""
     if redirect := require_login(request):
         return redirect
     
+    token = device_token.strip()
+    
+    # Validate token before saving (only if token is provided)
+    if token:
+        is_valid, message, data = await validate_device_token(token)
+        
+        if not is_valid:
+            log(f"Token validation failed: {message}", None, "CONFIG")
+            return RedirectResponse(
+                url=f"/settings?error=Token validation failed: {message}", 
+                status_code=302
+            )
+        
+        log(f"Token validated successfully: {message}", None, "CONFIG")
+    
+    # Save the token
     config = load_config()
-    config["device_token"] = device_token.strip()
+    config["device_token"] = token
     save_config(config)
     
-    log(f"Device token saved ({len(device_token)} chars)", None, "CONFIG")
+    log(f"Device token saved ({len(token)} chars)", None, "CONFIG")
     
-    return RedirectResponse(url="/settings?success=Device token saved successfully", status_code=302)
+    if token:
+        return RedirectResponse(url="/settings?success=Device token validated and saved successfully", status_code=302)
+    else:
+        return RedirectResponse(url="/settings?success=Device token cleared", status_code=302)
 
 @app.post("/devices/add", response_class=HTMLResponse)
 def add_device(request: Request, new_ip: str = Form(...)):
