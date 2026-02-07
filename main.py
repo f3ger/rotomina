@@ -1985,6 +1985,31 @@ async def uninstall_pogo(device_id: str) -> bool:
         log(f"Error uninstalling app: {str(e)}", device_id, "ERROR")
         return False
 
+async def reclaim_storage(device_id: str) -> bool:
+    """Reclaims storage after uninstall by trimming caches and filesystem."""
+    device_id = format_device_id(device_id)
+    try:
+        log("Reclaiming storage via trim-caches and fstrim", device_id, "UPDATE")
+
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot connect for storage reclaim", device_id, "ERROR")
+            return False
+
+        # Trim package manager caches (free up to 1GB)
+        adb_pool.execute_command(device_id, ["adb", "shell", "pm trim-caches 1073741824"])
+
+        # Filesystem TRIM to reclaim deleted blocks on flash storage
+        adb_pool.execute_command(device_id, ["adb", "shell", "sm fstrim"])
+
+        # Brief wait for operations to complete
+        await asyncio.sleep(5)
+
+        log("Storage reclaim completed", device_id, "UPDATE")
+        return True
+    except Exception as e:
+        log(f"Error reclaiming storage: {str(e)}", device_id, "ERROR")
+        return False
+
 async def reboot_and_wait(device_id: str) -> bool:
     """Reboots device to reclaim storage after uninstall, waits for reconnect."""
     device_id = format_device_id(device_id)
@@ -2046,6 +2071,7 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             ("normal", None, 60),
             ("cache_clear", clear_app_cache, 50),
             ("uninstall_reinstall", uninstall_pogo, 55),
+            ("storage_reclaim", reclaim_storage, 55),
             ("reboot_reinstall", reboot_and_wait, 55)
         ]
         
@@ -2072,6 +2098,15 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     update_progress(40)
                     recovery_success = await recovery_action(device_ip)
                     update_progress(45)
+                elif strategy_name == "storage_reclaim":
+                    await send_discord_notification(
+                        message=f"Reinstall after uninstall failed on **{device_name}** ({device_ip}). Trimming caches and filesystem to reclaim storage.",
+                        title="Installation Retry - Storage Reclaim",
+                        color=DISCORD_COLOR_ORANGE
+                    )
+                    update_progress(40)
+                    recovery_success = await recovery_action(device_ip)
+                    update_progress(50)
                 elif strategy_name == "reboot_reinstall":
                     await send_discord_notification(
                         message=f"Installation after uninstall failed on **{device_name}** ({device_ip}). Rebooting device to reclaim storage.",
