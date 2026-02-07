@@ -37,6 +37,7 @@ POGO_MIRROR_URL = "https://mirror.unownhash.com"
 DEFAULT_ARCH = "arm64-v8a"
 device_status_cache = {}
 update_lock = threading.Lock()
+config_lock = threading.RLock()
 update_in_progress = False
 current_progress = 0
 devices_in_update = {}  # Format: {device_id: {"in_update": True, "update_type": "pogo/mitm/pif", "started_at": timestamp}}
@@ -528,41 +529,53 @@ version_manager = VersionManager()
 def save_config(config):
     """
     Saves the configuration to config.json.
-    Creates a backup before writing to prevent data loss.
+    Creates a backup before writing. Uses atomic write (temp file + rename)
+    to prevent data loss on crash.
     """
-    try:
-        # Create backup if config file exists
-        if CONFIG_FILE.exists():
+    with config_lock:
+        try:
+            # Create backup if config file exists
+            if CONFIG_FILE.exists():
+                backup_file = CONFIG_FILE.with_suffix('.json.bak')
+                try:
+                    shutil.copy2(CONFIG_FILE, backup_file)
+                except Exception as e:
+                    log(f"Warning: Could not create config backup: {e}", None, "CONFIG")
+
+            # Atomic write: write to temp file first, then rename
+            config_dir = CONFIG_FILE.parent
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(config_dir), suffix='.json.tmp')
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(config, f, indent=4, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, str(CONFIG_FILE))
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+
+            # Clear display name cache when config changes
+            clear_display_name_cache()
+
+        except Exception as e:
+            log(f"Error saving config: {e}", None, "ERROR")
+            # Try to restore from backup
             backup_file = CONFIG_FILE.with_suffix('.json.bak')
-            try:
-                shutil.copy2(CONFIG_FILE, backup_file)
-            except Exception as e:
-                log(f"Warning: Could not create config backup: {e}", None, "CONFIG")
-        
-        # Write new config
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-            f.flush()
-
-        # Clear display name cache when config changes
-        clear_display_name_cache()
-
-    except Exception as e:
-        log(f"Error saving config: {e}", None, "ERROR")
-        # Try to restore from backup
-        backup_file = CONFIG_FILE.with_suffix('.json.bak')
-        if backup_file.exists():
-            log("Attempting to restore config from backup", None, "CONFIG")
-            try:
-                shutil.copy2(backup_file, CONFIG_FILE)
-                log("Config restored from backup", None, "CONFIG")
-            except Exception as restore_error:
-                log(f"Failed to restore config: {restore_error}", None, "ERROR")
+            if backup_file.exists():
+                log("Attempting to restore config from backup", None, "CONFIG")
+                try:
+                    shutil.copy2(backup_file, CONFIG_FILE)
+                    log("Config restored from backup", None, "CONFIG")
+                except Exception as restore_error:
+                    log(f"Failed to restore config: {restore_error}", None, "ERROR")
 
 def load_config():
     """
     Loads the configuration from config.json.
     If the file doesn't exist, creates it with default values.
+    On read errors, attempts to load from backup before falling back to defaults.
     """
     default_config = {
         "devices": [],
@@ -571,36 +584,52 @@ def load_config():
         "pif_auto_update_enabled": True,
         "pogo_auto_update_enabled": True
     }
-    
-    if not CONFIG_FILE.exists():
-        log(f"Config file not found, creating default config", None, "CONFIG")
-        save_config(default_config)
-        return default_config
-    
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        log(f"Error reading config file: {e}, creating default config", None, "ERROR")
-        save_config(default_config)
-        return default_config
-    
-    # Ensure all required fields exist
-    for device in config.get("devices", []):
-        device.setdefault("display_name", device["ip"].split(":")[0])
-        device.setdefault("pogo_version", "N/A")
-        device.setdefault("mitm_version", "N/A")
-        device.setdefault("module_version", "N/A")
-        device.setdefault("control_enabled", False)
-        device.setdefault("memory_threshold", 200)
-    config.setdefault("devices", [])
-    config.setdefault("users", [])
-    config.setdefault("discord_webhook_url", "")
-    config.setdefault("pif_auto_update_enabled", True)
-    config.setdefault("pogo_auto_update_enabled", True)
-    config.setdefault("device_token", "")
-    config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
-    return config
+
+    with config_lock:
+        if not CONFIG_FILE.exists():
+            log(f"Config file not found, creating default config", None, "CONFIG")
+            save_config(default_config)
+            return default_config
+
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            log(f"Error reading config file: {e}", None, "ERROR")
+            # Try backup before falling back to defaults
+            backup_file = CONFIG_FILE.with_suffix('.json.bak')
+            if backup_file.exists():
+                try:
+                    log("Attempting to load config from backup", None, "CONFIG")
+                    with open(backup_file, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                    log("Config loaded from backup successfully", None, "CONFIG")
+                    save_config(config)  # Restore backup as active config
+                except (json.JSONDecodeError, IOError) as backup_error:
+                    log(f"Backup also corrupted: {backup_error}, creating default config", None, "ERROR")
+                    save_config(default_config)
+                    return default_config
+            else:
+                log("No backup available, creating default config", None, "ERROR")
+                save_config(default_config)
+                return default_config
+
+        # Ensure all required fields exist
+        for device in config.get("devices", []):
+            device.setdefault("display_name", device["ip"].split(":")[0])
+            device.setdefault("pogo_version", "N/A")
+            device.setdefault("mitm_version", "N/A")
+            device.setdefault("module_version", "N/A")
+            device.setdefault("control_enabled", False)
+            device.setdefault("memory_threshold", 200)
+        config.setdefault("devices", [])
+        config.setdefault("users", [])
+        config.setdefault("discord_webhook_url", "")
+        config.setdefault("pif_auto_update_enabled", True)
+        config.setdefault("pogo_auto_update_enabled", True)
+        config.setdefault("device_token", "")
+        config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
+        return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
     """
