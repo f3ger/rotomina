@@ -2208,7 +2208,7 @@ async def optimized_pogo_update_task():
 
 @dataclass
 class MapWorldConfig:
-    download_url: str = "https://protomines.ddns.net/tools/apk/MapWorld-release.zip"
+    download_url: str = "https://protomines.ddns.net/apk/MapWorld-release.zip"
     apk_dir: Path = BASE_DIR / "data" / "apks"
     apk_base_name: str = "mapworld"
     package_name: str = "com.github.furtif.furtifformaps"  # Adjust to actual MapWorld package
