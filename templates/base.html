@@ -84,8 +84,6 @@
                         <a href="/settings" class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Settings</a>
 
                         {% if request.session.get("logged_in") %}
-                            <div class="px-3 pt-2 text-sm text-gray-400" x-text="''"></div>
-                            <div class="px-3 py-2 text-sm text-gray-300">{{ request.session.get("username") }}</div>
                             <a href="/logout" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Logout</a>
                         {% endif %}
                     </div>
