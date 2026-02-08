@@ -109,7 +109,7 @@
                         </div>
                     </div>
 
-                    <div class="dropdown relative" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }" x-init="init()">
+                    <div class="dropdown relative" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
                         <button @click="open = !open" class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center" type="button">
                             Module
                             <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -309,7 +309,7 @@
                                 </div>
 
                                 <!-- Module Dropdown -->
-                                <div class="dropdown" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }" x-init="init()">
+                                <div class="dropdown" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
                                     <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">
                                         Module
                                         <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -406,8 +406,15 @@ function statusPage() {
             statusText: 'Connecting...'
         },
         socket: null,
+        initialized: false,
         
         init() {
+            // Prevent duplicate initialization
+            if (this.initialized) {
+                return;
+            }
+            this.initialized = true;
+            
             try {
                 const el = this.$el;
                 if (el && el.dataset) {
