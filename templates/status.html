@@ -36,14 +36,14 @@
     </div>
     
     <!-- Update status indicators -->
-    <div class="flex justify-end mb-4">
-        <div class="flex flex-col sm:flex-row gap-2 sm:gap-2">
-            <span class="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium" 
+    <div class="flex flex-col sm:flex-row sm:justify-end mb-4">
+        <div class="flex flex-col sm:flex-row gap-2 sm:gap-2 w-full sm:w-auto">
+            <span class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto" 
                   :class="pifAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
                 PIF Updates: <span x-text="pifAutoUpdateEnabled ? 'Automatic' : 'Manual'" class="ml-1"></span>
             </span>
             
-            <span class="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium" 
+            <span class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto" 
                   :class="pogoAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
                 PoGO Updates: <span x-text="pogoAutoUpdateEnabled ? 'Automatic' : 'Manual'" class="ml-1"></span>
             </span>
