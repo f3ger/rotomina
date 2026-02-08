@@ -796,7 +796,7 @@ async def notify_update_downloaded(update_type: str, version: str):
 # Fixed API URL for token validation (not configurable)
 TOKEN_VALIDATION_URL = "https://protomines.ddns.net/api/access/get_access_status.php"
 
-async def validate_device_token(token: str) -> Tuple[bool, str, dict]:
+async def validate_device_token(token: str) -> dict[bool, str]:
     """
     Validates a device token against the Protomines API.
     
@@ -804,13 +804,12 @@ async def validate_device_token(token: str) -> Tuple[bool, str, dict]:
         token: The encoded token to validate
         
     Returns:
-        Tuple[bool, str, dict]: (is_valid, message, data)
+        dict[bool, str]: (is_valid, message)
         - is_valid: True if token is valid and has access
         - message: API response message
-        - data: Additional data from API (Access, Code, Token) or empty dict
     """
     if not token or not token.strip():
-        return False, "No token provided", {}
+        return [False, "No token provided"]
     
     try:
         async with httpx.AsyncClient() as client:
@@ -823,36 +822,30 @@ async def validate_device_token(token: str) -> Tuple[bool, str, dict]:
             
             if response.status_code != 200:
                 log(f"Token validation API returned status {response.status_code}", None, "ERROR")
-                return False, f"API error: HTTP {response.status_code}", {}
+                return [False, f"API error: HTTP {response.status_code}"]
             
             result = response.json()
             
             success = result.get("success", False)
             message = result.get("message", "Unknown response")
-            data = result.get("data", {})
             
             if success:
                 # Check if Access is granted
-                has_access = data.get("Access", False)
-                if has_access:
-                    log(f"Token validated successfully: {message}", None, "CONFIG")
-                    return True, message, data
-                else:
-                    log(f"Token valid but no access: {message}", None, "CONFIG")
-                    return False, "Token valid but access denied", data
+                log(f"Token validated successfully: {message}", None, "CONFIG")
+                return [True, message]
             else:
                 log(f"Token validation failed: {message}", None, "CONFIG")
-                return False, message, {}
+                return [False, message]
                 
     except httpx.TimeoutException:
         log("Token validation timed out", None, "ERROR")
-        return False, "Validation timeout", {}
+        return [False, "Validation timeout"]
     except json.JSONDecodeError:
         log("Token validation returned invalid JSON", None, "ERROR")
-        return False, "Invalid API response", {}
+        return [False, "Invalid API response"]
     except Exception as e:
         log(f"Token validation error: {str(e)}", None, "ERROR")
-        return False, f"Validation error: {str(e)}", {}
+        return [False, f"Validation error: {str(e)}"]
 
 async def notify_invalid_token(device_name: str, device_ip: str, error_message: str):
     """Sends Discord notification when device token is invalid"""
@@ -1203,7 +1196,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
     
     # Validate token against API before proceeding
     log("Validating device token against API", device_id, "CONFIG")
-    is_valid, message, data = await validate_device_token(stored_token)
+    is_valid, message = await validate_device_token(stored_token)
     
     if not is_valid:
         log(f"Token validation failed: {message}", device_id, "ERROR")
@@ -5175,7 +5168,7 @@ async def save_device_token(request: Request, device_token: str = Form("")):
     
     # Validate token before saving (only if token is provided)
     if token:
-        is_valid, message, data = await validate_device_token(token)
+        is_valid, message = await validate_device_token(token)
         
         if not is_valid:
             log(f"Token validation failed: {message}", None, "CONFIG")
