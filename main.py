@@ -19,9 +19,10 @@ from pathlib import Path
 from functools import wraps
 from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
+from uuid import uuid4
 
 from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -42,6 +43,7 @@ update_in_progress = False
 current_progress = 0
 devices_in_update = {}  # Format: {device_id: {"in_update": True, "update_type": "pogo/mitm/pif", "started_at": timestamp}}
 device_runtimes = {}
+device_setup_tasks = {}  # {setup_id: {device_id, step, step_label, progress, error, needs_auth, completed, results}}
 
 # Logging Helper
 _display_name_cache = {}
@@ -903,19 +905,37 @@ def check_adb_connection(device_id: str) -> tuple[bool, str]:
             # Initial connection check
             if adb_pool.ensure_connected(device_id):
                 return True, ""
-            
+
+            # Check if device is unauthorized (needs user confirmation on device)
+            try:
+                devices_result = subprocess.run(
+                    ["adb", "devices"],
+                    capture_output=True, text=True,
+                    timeout=5
+                )
+                if f"{device_id}\tunauthorized" in devices_result.stdout:
+                    return False, "Device unauthorized: Please confirm ADB authorization on the device"
+            except Exception:
+                pass
+
             # For network devices, try explicit reconnection
             if is_network_device:
                 try:
                     # Disconnect first to reset connection state
-                    adb_pool.execute_command(device_id, ["adb", "disconnect", device_id], timeout=5)
-                    time.sleep(0.5)  # Brief pause for cleanup
-                    
-                    # Reconnect
-                    connect_result = adb_pool.execute_command(
-                        device_id, ["adb", "connect", device_id], timeout=10
+                    subprocess.run(
+                        ["adb", "disconnect", device_id],
+                        capture_output=True, text=True,
+                        timeout=10
                     )
-                    
+                    time.sleep(0.5)  # Brief pause for cleanup
+
+                    # Reconnect
+                    connect_result = subprocess.run(
+                        ["adb", "connect", device_id],
+                        capture_output=True, text=True,
+                        timeout=15
+                    )
+
                     # Check for specific error patterns
                     stdout = connect_result.stdout.lower()
                     if "failed to authenticate" in stdout:
@@ -924,11 +944,22 @@ def check_adb_connection(device_id: str) -> tuple[bool, str]:
                         # Verify the connection worked
                         if adb_pool.ensure_connected(device_id):
                             return True, ""
+                        # Check if device is unauthorized after connect
+                        try:
+                            devices_result = subprocess.run(
+                                ["adb", "devices"],
+                                capture_output=True, text=True,
+                                timeout=5
+                            )
+                            if f"{device_id}\tunauthorized" in devices_result.stdout:
+                                return False, "Device unauthorized: Please confirm ADB authorization on the device"
+                        except Exception:
+                            pass
                     elif any(err in stdout for err in ["cannot", "failed", "refused", "unreachable"]):
                         if attempt == 2:  # Last attempt
                             return False, f"Connection failed: {connect_result.stdout.strip()}"
                         continue  # Retry
-                        
+
                 except subprocess.TimeoutExpired:
                     if attempt == 2:
                         return False, "Connection timeout"
@@ -1569,7 +1600,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
     
     Behavior based on RotomTryAutoStart:
     - TRUE:  Wait 40 seconds for automatic startup, verify apps running
-    - FALSE: Click "Recheck Service Status" → "Start service", wait 40 seconds
+    - FALSE: Click "Recheck Service Status" -> "Start service", wait 40 seconds
     
     On failure (crash): Restart MapWorld and retry (max 3 attempts)
     After all retries fail: Wait 5 minutes, then one final attempt
@@ -2080,8 +2111,22 @@ async def reboot_and_wait(device_id: str) -> bool:
             await asyncio.sleep(10)
             try:
                 if adb_pool.ensure_connected(device_id):
-                    log("Device back online after reboot", device_id, "UPDATE")
-                    await asyncio.sleep(10)  # Stabilization
+                    log("Device back online after reboot, waiting for boot completion", device_id, "UPDATE")
+                    for _ in range(24):  # max 120s
+                        try:
+                            result = adb_pool.execute_command(
+                                device_id,
+                                ["adb", "shell", "getprop", "sys.boot_completed"],
+                                timeout=5
+                            )
+                            if result.stdout.strip() == "1":
+                                log("Device boot completed", device_id, "UPDATE")
+                                await asyncio.sleep(5)
+                                return True
+                        except Exception:
+                            pass
+                        await asyncio.sleep(5)
+                    log("Boot completion not confirmed, proceeding anyway", device_id, "UPDATE")
                     return True
             except Exception:
                 continue
@@ -2262,6 +2307,168 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
     finally:
         # Always clear update status
         clear_device_update_status(device_ip)
+
+async def run_device_setup(setup_id: str, device_id: str, start_step: str = "adb_connect"):
+    """Runs the device setup pipeline after adding a new device."""
+    task = device_setup_tasks[setup_id]
+
+    steps = ["adb_connect", "version_check", "pogo_setup", "mapworld_setup", "done"]
+    step_labels = {
+        "adb_connect": "Checking ADB connection...",
+        "version_check": "Reading installed versions...",
+        "pogo_setup": "Checking Pokemon GO...",
+        "mapworld_setup": "Checking MapWorld...",
+        "done": "Setup complete"
+    }
+
+    start_index = steps.index(start_step) if start_step in steps else 0
+    loop = asyncio.get_event_loop()
+
+    try:
+        # --- Step: adb_connect ---
+        if start_index <= 0:
+            task.update({"step": "adb_connect", "step_label": step_labels["adb_connect"], "progress": 5})
+
+            # Clear TTL cache for this device so we get a fresh check
+            check_adb_connection.cache_clear()
+
+            is_connected, error_msg = await loop.run_in_executor(None, check_adb_connection, device_id)
+
+            if not is_connected:
+                if "authenticat" in (error_msg or "").lower() or "unauthorized" in (error_msg or "").lower():
+                    task.update({"progress": 10, "needs_auth": True, "step_label": "ADB authorization required"})
+                    return  # Pipeline paused, waiting for auth retry
+                else:
+                    task.update({"progress": 10, "error": f"ADB connection failed: {error_msg}", "completed": True})
+                    return
+
+            task.update({"progress": 15})
+
+        # --- Step: version_check ---
+        if start_index <= 1:
+            task.update({"step": "version_check", "step_label": step_labels["version_check"], "progress": 20})
+
+            try:
+                version_info = await loop.run_in_executor(
+                    None, version_manager.get_version_info, device_id, True
+                )
+                pogo_installed = version_info.get("pogo_version", "N/A") if version_info else "N/A"
+                mitm_installed = version_info.get("mitm_version", "N/A") if version_info else "N/A"
+            except Exception as e:
+                log(f"Version check error during setup: {e}", device_id, "ERROR")
+                pogo_installed = "N/A"
+                mitm_installed = "N/A"
+
+            task["results"]["installed_pogo"] = pogo_installed
+            task["results"]["installed_mitm"] = mitm_installed
+            task.update({"progress": 30})
+
+        # --- Step: pogo_setup ---
+        if start_index <= 2:
+            task.update({"step": "pogo_setup", "step_label": step_labels["pogo_setup"], "progress": 35})
+
+            try:
+                # Get available versions from mirror
+                task.update({"step_label": "Fetching available PoGo versions..."})
+                versions = await loop.run_in_executor(None, get_available_versions)
+                latest_info = versions.get("latest", {})
+
+                if not latest_info:
+                    task["results"]["pogo"] = "Could not fetch version info from mirror"
+                else:
+                    latest_version = latest_info.get("version", "N/A")
+                    pogo_installed = task["results"].get("installed_pogo", "N/A")
+
+                    if pogo_installed == latest_version:
+                        task["results"]["pogo"] = f"Already up to date (v{pogo_installed})"
+                    else:
+                        # Need to download/install
+                        target_file = APK_DIR / latest_info["filename"]
+                        if not target_file.exists():
+                            task.update({"step_label": f"Downloading PoGo v{latest_version}...", "progress": 40})
+                            APK_DIR.mkdir(parents=True, exist_ok=True)
+                            await loop.run_in_executor(None, download_apk, latest_info)
+
+                        task.update({"step_label": f"Extracting PoGo v{latest_version}...", "progress": 50})
+                        extract_path = EXTRACT_DIR / latest_version
+                        await loop.run_in_executor(None, unzip_apk, target_file, extract_path)
+
+                        task.update({"step_label": f"Installing PoGo v{latest_version}...", "progress": 55})
+                        install_success = await optimized_perform_installation(device_id, extract_path)
+
+                        if install_success:
+                            task["results"]["pogo"] = f"Installed v{latest_version}"
+                        else:
+                            task["results"]["pogo"] = f"Installation failed for v{latest_version}"
+
+            except Exception as e:
+                log(f"PoGo setup error during device setup: {e}", device_id, "ERROR")
+                task["results"]["pogo"] = f"Error: {str(e)}"
+
+            task.update({"progress": 70})
+
+        # --- Step: mapworld_setup ---
+        if start_index <= 3:
+            task.update({"step": "mapworld_setup", "step_label": step_labels["mapworld_setup"], "progress": 72})
+
+            try:
+                updater = MapWorldUpdater()
+                current_apk = updater.get_current_apk_path()
+
+                if not current_apk or not current_apk.exists():
+                    # Need to download MapWorld first
+                    task.update({"step_label": "Downloading MapWorld...", "progress": 75})
+                    dl_success, dl_path = await updater.download_mapworld()
+
+                    if not dl_success:
+                        task["results"]["mapworld"] = "Download failed"
+                    else:
+                        task.update({"step_label": "Installing MapWorld...", "progress": 85})
+                        install_success = await updater.install_mapworld(device_id, force_install=True)
+                        if install_success:
+                            task["results"]["mapworld"] = "Installed successfully"
+                        else:
+                            task["results"]["mapworld"] = "Installation failed"
+                else:
+                    # APK exists, check if device needs it
+                    task.update({"step_label": "Checking MapWorld version...", "progress": 78})
+                    version_name, _ = updater.extract_apk_version(current_apk)
+                    should_update, reason = await updater.should_update_device(device_id, version_name)
+
+                    if not should_update:
+                        task["results"]["mapworld"] = f"Already up to date (v{version_name})"
+                    else:
+                        task.update({"step_label": f"Installing MapWorld v{version_name}...", "progress": 85})
+                        install_success = await updater.install_mapworld(device_id, force_install=True)
+                        if install_success:
+                            task["results"]["mapworld"] = f"Installed v{version_name}"
+                        else:
+                            task["results"]["mapworld"] = "Installation failed"
+
+            except Exception as e:
+                log(f"MapWorld setup error during device setup: {e}", device_id, "ERROR")
+                task["results"]["mapworld"] = f"Error: {str(e)}"
+
+            task.update({"progress": 95})
+
+        # --- Step: done ---
+        task.update({
+            "step": "done",
+            "step_label": step_labels["done"],
+            "progress": 100,
+            "completed": True
+        })
+        version_manager.mark_for_refresh(device_id)
+
+    except Exception as e:
+        log(f"Device setup pipeline error: {e}", device_id, "ERROR")
+        task.update({"error": f"Unexpected error: {str(e)}", "completed": True})
+
+
+async def run_device_setup_from_step(setup_id: str, device_id: str, start_step: str):
+    """Wrapper to restart setup pipeline from a specific step (used for auth retry)."""
+    await run_device_setup(setup_id, device_id, start_step=start_step)
+
 
 # Optimized PoGO Auto-Update Task
 async def optimized_pogo_update_task():
@@ -2927,7 +3134,7 @@ class MapWorldUpdater:
             comparison = self.compare_versions(installed_version, new_version)
             
             if comparison < 0:
-                return True, f"Update available: {installed_version} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_version}"
+                return True, f"Update available: {installed_version} ->{new_version}"
             elif comparison == 0:
                 return False, f"Same version already installed: {installed_version}"
             else:
@@ -3269,7 +3476,7 @@ async def check_all_device_versions() -> Dict:
                 )
                 if comparison < 0:
                     device_result["update_available"] = True
-                    device_result["update_info"] = f"{device_result['installed_version']} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {available_version}"
+                    device_result["update_info"] = f"{device_result['installed_version']} ->{available_version}"
                 elif comparison == 0:
                     device_result["update_available"] = False
                     device_result["update_info"] = "Up to date"
@@ -3407,7 +3614,7 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_filename}")
+        logger.info(f"Renamed {current_filename} ->{new_filename}")
         
         return True
         
@@ -3480,7 +3687,7 @@ def quick_fix_version() -> bool:
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {new_filename}")
+        logger.info(f"Fixed version: {current_apk.name} ->{new_filename}")
         return True
         
     except Exception as e:
@@ -4900,7 +5107,7 @@ def status_page(request: Request):
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
             "status": check_adb_connection(ip)[0],
-            "is_alive": "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦" if status["is_alive"] else "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢",
+            "is_alive": status["is_alive"],
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
@@ -4991,23 +5198,21 @@ async def save_device_token(request: Request, device_token: str = Form("")):
     else:
         return RedirectResponse(url="/settings?success=Device token cleared", status_code=302)
 
-@app.post("/devices/add", response_class=HTMLResponse)
-def add_device(request: Request, new_ip: str = Form(...)):
+@app.post("/devices/add")
+async def add_device(request: Request, new_ip: str = Form(...)):
     if redirect := require_login(request):
         return redirect
-    
+
     device_id = format_device_id(new_ip.strip())
     log(f"Adding device", device_id, "CONFIG")
-    
+
     config = load_config()
     if not any(dev["ip"] == device_id for dev in config["devices"]):
-        is_connected, error_msg = check_adb_connection(device_id)
-        
         if ":" in device_id:
             display_name = device_id.split(":")[0]
         else:
             display_name = f"Device-{device_id[-4:]}" if len(device_id) > 4 else device_id
-        
+
         config["devices"].append({
             "ip": device_id,
             "display_name": display_name,
@@ -5018,8 +5223,50 @@ def add_device(request: Request, new_ip: str = Form(...)):
             "module_version": "N/A"
         })
         save_config(config)
-    
-    return RedirectResponse(url="/settings", status_code=302)
+
+    # Start automatic device setup pipeline
+    setup_id = str(uuid4())
+    device_setup_tasks[setup_id] = {
+        "device_id": device_id,
+        "step": "pending",
+        "step_label": "Starting setup...",
+        "progress": 0,
+        "error": None,
+        "needs_auth": False,
+        "completed": False,
+        "results": {}
+    }
+    asyncio.create_task(run_device_setup(setup_id, device_id))
+
+    return JSONResponse({"setup_id": setup_id, "device_id": device_id})
+
+
+@app.get("/devices/setup-status/{setup_id}")
+def get_setup_status(setup_id: str):
+    task = device_setup_tasks.get(setup_id)
+    if not task:
+        return JSONResponse({"error": "Setup not found"}, status_code=404)
+    return JSONResponse(task)
+
+
+@app.post("/devices/setup-retry-auth/{setup_id}")
+async def retry_setup_auth(setup_id: str):
+    task = device_setup_tasks.get(setup_id)
+    if not task:
+        return JSONResponse({"error": "Setup not found"}, status_code=404)
+
+    task["needs_auth"] = False
+    task["error"] = None
+    task["step_label"] = "Retrying ADB connection..."
+    task["progress"] = 5
+
+    # Clear ADB cache so fresh connection attempt is made
+    check_adb_connection.cache_clear()
+
+    device_id = task["device_id"]
+    asyncio.create_task(run_device_setup_from_step(setup_id, device_id, "adb_connect"))
+
+    return JSONResponse({"status": "retry_started"})
 
 @app.post("/devices/remove", response_class=HTMLResponse)
 def remove_devices(request: Request, devices: List[str] = Form(...)):
