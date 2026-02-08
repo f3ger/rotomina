@@ -4,8 +4,36 @@
     <meta charset="UTF-8">
     <link rel="icon" href="/static/assets/favicon.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/assets/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/assets/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/assets/favicon-16x16.png">
+    <link rel="manifest" href="/static/assets/site.webmanifest">
     <title>{{ title if title else "Rotomina" }}</title>
+    <meta name="description" content="Rotomina Device Management" />
+    <!-- Cache Control -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+  
+    <!-- Security Headers (Apenas os que funcionam via meta) -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+  
+    <!-- Performance & Compatibility -->
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <meta name="format-detection" content="telephone=no" />
+  
+    <!-- SEO -->
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="f3ger" />
+    <meta name="generator" content="Python, vscode" />
+
+    <!-- PWA & Mobile -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Rotomina" />
+    <meta name="application-name" content="Rotomina" />
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
