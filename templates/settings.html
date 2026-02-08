@@ -71,7 +71,7 @@
                                     <label class="inline-flex items-center cursor-pointer">
                                         <div class="relative">
                                             <input type="checkbox" name="control_enabled" class="sr-only peer" {% if device.control_enabled %}checked{% endif %} onchange="this.form.submit()">
-                                            <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                            <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                                         </div>
                                     </label>
                                 </form>
@@ -239,7 +239,7 @@
                         <form action="/settings/toggle-pif-autoupdate" method="post">
                             <label class="relative inline-flex items-center cursor-pointer mb-4">
                                 <input type="checkbox" name="enabled" class="sr-only peer" {% if config.pif_auto_update_enabled %}checked{% endif %}>
-                                <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                                 <span class="ml-3 text-sm font-medium text-gray-300">Enable automatic module updates</span>
                             </label>
                             <p class="text-sm text-gray-400 mb-4">When disabled, updates will still be downloaded but not automatically installed on devices. You can still manually update devices from the Status page.</p>
@@ -257,7 +257,7 @@
                         <form action="/settings/toggle-pogo-autoupdate" method="post">
                             <label class="relative inline-flex items-center cursor-pointer mb-4">
                                 <input type="checkbox" name="enabled" class="sr-only peer" {% if config.pogo_auto_update_enabled %}checked{% endif %}>
-                                <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                                 <span class="ml-3 text-sm font-medium text-gray-300">Enable automatic PoGO updates</span>
                             </label>
                             <p class="text-sm text-gray-400 mb-4">When disabled, updates will still be downloaded but not automatically installed on devices. You can still manually update devices from the Status page.</p>

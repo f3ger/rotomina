@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div x-data="statusPage()" x-init="initWebsocket()" x-cloak>
+<div x-data="statusPage()" x-init="init()" x-cloak
+     data-pogo-latest="{{ pogo_latest }}"
+     data-pogo-previous="{{ pogo_previous }}"
+     data-pogo-auto-update-enabled="{% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %}"
+     data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}">
     <!-- Header with status information -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mb-6">
         <h1 class="text-2xl font-bold text-white">
             Device Overview
             <span class="relative inline-flex h-3 w-3 ml-2" :class="connection.status === 'connected' ? 'bg-green-500' : (connection.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500')" 
@@ -17,7 +21,7 @@
             <span class="text-sm text-gray-400 ml-2" x-text="'Last updated: ' + lastUpdated"></span>
         </h1>
         
-        <div class="flex items-center space-x-3">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-3">
             <button type="button" @click="pogoUpdateAll()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                 <span>PoGo Update All (<span x-text="pogoLatest"></span>)</span>
             </button>
@@ -33,7 +37,7 @@
     
     <!-- Update status indicators -->
     <div class="flex justify-end mb-4">
-        <div class="space-x-2">
+        <div class="flex flex-col sm:flex-row gap-2 sm:gap-2">
             <span class="inline-flex items-center px-3 py-1 rounded-md text-sm font-medium" 
                   :class="pifAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
                 PIF Updates: <span x-text="pifAutoUpdateEnabled ? 'Automatic' : 'Manual'" class="ml-1"></span>
@@ -45,14 +49,108 @@
             </span>
         </div>
     </div>
-    
+
+    <!-- Mobile cards (sm and down) -->
+    <div class="md:hidden space-y-3">
+        <template x-for="device in sortedDevices" :key="device.ip">
+            <div class="bg-dark-800 border border-gray-700 rounded-lg p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="text-base font-semibold text-gray-100 truncate" x-text="device.display_name"></div>
+                        <div class="text-xs text-gray-400 mt-1" x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')"></div>
+                    </div>
+
+                    <div class="flex items-center gap-2 flex-none">
+                        <span class="text-sm" x-text="device.status ? '✅' : '❌'" :class="device.status ? 'text-green-500' : 'text-red-500'"></span>
+                        <span class="text-sm" x-text="device.is_alive ? '✅' : '❌'" :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
+                    </div>
+                </div>
+
+                <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
+                    <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                        <div class="text-xs text-gray-400">PoGo</div>
+                        <div class="text-gray-200" x-text="device.pogo"></div>
+                    </div>
+                    <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                        <div class="text-xs text-gray-400">PIF</div>
+                        <div class="text-gray-200" x-text="device.module"></div>
+                    </div>
+                    <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                        <div class="text-xs text-gray-400">Runtime</div>
+                        <div class="text-gray-200" x-text="formatRuntime(device.runtime)"></div>
+                    </div>
+                    <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                        <div class="text-xs text-gray-400">Memory</div>
+                        <div class="text-gray-200" x-text="formatMemory(device.mem_free)"></div>
+                    </div>
+                </div>
+
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <div class="dropdown relative" x-data="{ open: false }">
+                        <button @click="open = !open" class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center" type="button">
+                            PoGo
+                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="open" @click.away="open = false" class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
+                            <div class="py-1 divide-y divide-gray-700">
+                                <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoLatest"></button>
+                                <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoPrevious"></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dropdown relative" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }" x-init="init()">
+                        <button @click="open = !open" class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center" type="button">
+                            Module
+                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="open" @click.away="open = false" class="origin-top-left absolute left-0 mt-2 w-72 max-w-[92vw] rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
+                            <div class="py-2 px-2">
+                                <div class="flex border-b border-gray-700 mb-2 pb-2">
+                                    <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All</button>
+                                    <button @click="moduleType = 'fork'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
+                                    <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1" :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
+                                </div>
+
+                                <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
+                                    <template x-for="version in filteredVersions()" :key="`${version.module_type}-${version.version}`">
+                                        <button type="button" @click="updateDeviceModule(device.ip, version.version, version.module_type)" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
+                                            <div class="flex justify-between items-center">
+                                                <div>
+                                                    <span class="text-white font-medium" x-text="version.name"></span>
+                                                    <span class="text-xs text-gray-500 ml-1" x-text="formatDate(version.published_at)"></span>
+                                                </div>
+                                                <span class="px-1.5 py-0.5 text-xs rounded" :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'" x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                            </div>
+                                        </button>
+                                    </template>
+                                    <div x-show="filteredVersions().length === 0" class="px-4 py-2 text-sm text-gray-500 text-center">
+                                        <span x-show="versions.length === 0">Loading versions...</span>
+                                        <span x-show="versions.length > 0">No versions found</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" @click="restartDevice(device.ip)" class="w-full px-3 py-2 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">Restart</button>
+                    <button type="button" @click="rebootDevice(device.ip)" class="w-full px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-500 border border-red-700 rounded-md text-xs">Reboot</button>
+                </div>
+            </div>
+        </template>
+    </div>
+
     <!-- Devices table -->
-    <div class="bg-dark-800 overflow-hidden shadow rounded-lg">
+    <div class="hidden md:block bg-dark-800 overflow-hidden shadow rounded-lg">
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-700">
                 <thead class="bg-dark-800">
                     <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('name')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('name')">
                             Name
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'name' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'name'">
@@ -60,7 +158,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('ip')">
+                        <th scope="col" class="hidden md:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('ip')">
                             IP / ID
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'ip' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'ip'">
@@ -68,7 +166,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('adb')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('adb')">
                             ADB
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'adb' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'adb'">
@@ -76,7 +174,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('alive')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('alive')">
                             Alive
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'alive' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'alive'">
@@ -84,7 +182,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('runtime')">
+                        <th scope="col" class="hidden lg:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('runtime')">
                             Runtime
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'runtime' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'runtime'">
@@ -92,7 +190,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('control')">
+                        <th scope="col" class="hidden lg:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('control')">
                             Control
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'control' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'control'">
@@ -100,7 +198,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('pogo')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('pogo')">
                             PoGo
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'pogo' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'pogo'">
@@ -108,7 +206,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('mitm')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('mitm')">
                             MITM
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'mitm' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'mitm'">
@@ -116,7 +214,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('module')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('module')">
                             PIF
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'module' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'module'">
@@ -124,7 +222,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('memory')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('memory')">
                             Memory
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'memory' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'memory'">
@@ -132,7 +230,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                             Actions
                         </th>
                     </tr>
@@ -140,9 +238,12 @@
                 <tbody class="bg-dark-800 divide-y divide-gray-700">
                     <template x-for="device in sortedDevices" :key="device.ip">
                         <tr class="hover:bg-gray-800/70 transition-colors">
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100" x-text="device.display_name"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.ip.includes(':') ? device.ip.split(':')[0] : device.ip"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100">
+                                <div x-text="device.display_name"></div>
+                                <div class="md:hidden text-xs text-gray-400 mt-1" x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')"></div>
+                            </td>
+                            <td class="hidden md:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.ip.includes(':') ? device.ip.split(':')[0] : device.ip"></td>
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <template x-if="device.status">
                                         <span class="text-green-500">✅</span>
@@ -162,11 +263,11 @@
                                     </template>
                                 </div>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <span x-text="device.is_alive ? '✅' : '❌'" :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
                             </td>
                             <!-- New Runtime column -->
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="hidden lg:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <span x-text="formatRuntime(device.runtime)"></span>
                                     <template x-if="device.last_runtime && device.last_runtime > 60">
@@ -176,14 +277,14 @@
                                     </template>
                                 </div>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="hidden lg:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <span class="px-2 py-1 text-xs rounded-full" :class="device.control_enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'" x-text="device.control_enabled ? 'Active' : 'Inactive'"></span>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.mitm"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.module"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="formatMemory(device.mem_free)"></td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.mitm"></td>
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.module"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="formatMemory(device.mem_free)"></td>
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
                                 <div class="dropdown" x-data="{ open: false }">
                                     <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">
                                         PoGo
@@ -198,9 +299,9 @@
                                         </div>
                                     </div>
                                 </div>
-                                
-                                <!-- Updated Module Dropdown -->
-                                <div class="dropdown" x-data="{ open: false, versions: [], moduleType: 'all' }" x-init="fetchAllModuleVersions()">
+
+                                <!-- Module Dropdown -->
+                                <div class="dropdown" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }" x-init="init()">
                                     <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">
                                         Module
                                         <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -209,50 +310,32 @@
                                     </button>
                                     <div x-show="open" @click.away="open = false" class="origin-top-right absolute mt-2 w-72 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-2 px-2">
-                                            <!-- Filter tabs -->
                                             <div class="flex border-b border-gray-700 mb-2 pb-2">
-                                                <button @click="moduleType = 'all'" 
-                                                        class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                                        :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">
-                                                    All Modules
-                                                </button>
-                                                <button @click="moduleType = 'fork'" 
-                                                        class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                                        :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">
-                                                    Fork
-                                                </button>
-                                                <button @click="moduleType = 'fix'" 
-                                                        class="px-3 py-1 text-xs rounded-md flex-1"
-                                                        :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">
-                                                    Fix
-                                                </button>
+                                                <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All Modules</button>
+                                                <button @click="moduleType = 'fork'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
+                                                <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1" :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
                                             </div>
-                                            
+
                                             <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
                                                 <template x-for="version in filteredVersions()" :key="`${version.module_type}-${version.version}`">
-                                                    <button type="button" 
-                                                            @click="updateDeviceModule(device.ip, version.version, version.module_type)" 
-                                                            class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
+                                                    <button type="button" @click="updateDeviceModule(device.ip, version.version, version.module_type)" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
                                                         <div class="flex justify-between items-center">
                                                             <div>
                                                                 <span class="text-white font-medium" x-text="version.name"></span>
                                                                 <span class="text-xs text-gray-500 ml-1" x-text="formatDate(version.published_at)"></span>
                                                             </div>
-                                                            <span class="px-1.5 py-0.5 text-xs rounded" 
-                                                                  :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'"
-                                                                  x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                                            <span class="px-1.5 py-0.5 text-xs rounded" :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'" x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
                                                         </div>
                                                     </button>
                                                 </template>
                                                 <div x-show="filteredVersions().length === 0" class="px-4 py-2 text-sm text-gray-500 text-center">
-                                                    <template x-if="versions.length === 0">Loading versions...</template>
-                                                    <template x-if="versions.length > 0">No versions found</template>
+                                                    <span x-show="versions.length === 0">Loading versions...</span>
+                                                    <span x-show="versions.length > 0">No versions found</span>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                                
                                 <button type="button" @click="restartDevice(device.ip)" class="px-3 py-1 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">
                                     Restart
                                 </button>
@@ -270,7 +353,7 @@
     
     <!-- Update progress modal -->
     <div id="updateModal" x-show="showUpdateModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" x-cloak>
-        <div class="bg-dark-800 rounded-lg shadow-xl max-w-md w-full p-6" @click.away="showUpdateModal = false">
+        <div class="bg-dark-800 rounded-lg shadow-xl w-[92vw] sm:max-w-md sm:w-full p-6" @click.away="showUpdateModal = false">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-xl font-medium text-gray-100">Update in progress...</h3>
                 <button @click="showUpdateModal = false" class="text-gray-400 hover:text-gray-200">
@@ -295,14 +378,17 @@ function statusPage() {
     return {
         devices: [],
         sortedDevices: [],
-        pogoLatest: "{{ pogo_latest }}",
-        pogoPrevious: "{{ pogo_previous }}",
-        pogoAutoUpdateEnabled: {% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %},
-        pifAutoUpdateEnabled: {% if config.pif_auto_update_enabled %}true{% else %}false{% endif %},
+        versions: [],
+        moduleType: 'all',
+        pogoLatest: "N/A",
+        pogoPrevious: "N/A",
+        pogoAutoUpdateEnabled: false,
+        pifAutoUpdateEnabled: false,
         lastUpdated: new Date().toLocaleTimeString(),
         isRefreshing: false,
         showUpdateModal: false,
         updateProgress: 0,
+        
         sortConfig: {
             key: 'name',
             direction: 'asc'
@@ -313,26 +399,64 @@ function statusPage() {
         },
         socket: null,
         
+        init() {
+            try {
+                const el = this.$el;
+                if (el && el.dataset) {
+                    this.pogoLatest = el.dataset.pogoLatest || this.pogoLatest;
+                    this.pogoPrevious = el.dataset.pogoPrevious || this.pogoPrevious;
+                    this.pogoAutoUpdateEnabled = el.dataset.pogoAutoUpdateEnabled === 'true';
+                    this.pifAutoUpdateEnabled = el.dataset.pifAutoUpdateEnabled === 'true';
+                }
+            } catch (e) {
+                console.error('Error initializing status page data:', e);
+            }
+
+            this.initWebsocket();
+        },
+        
         // Initialize websocket connection
         initWebsocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/status`;
             
             console.log('Initializing WebSocket connection to:', wsUrl);
+
+            // Avoid overlapping sockets (reconnect + timers). If we're already
+            // connected/connecting, don't create a new one.
+            try {
+                if (this.socket) {
+                    if (this.socket.readyState === WebSocket.OPEN) {
+                        return;
+                    }
+                    if (this.socket.readyState === WebSocket.CONNECTING) {
+                        return;
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+
+            this.connection.status = 'connecting';
+            this.connection.statusText = 'Connecting...';
             
             // Create a raw WebSocket connection (not using HTMX WebSocket extension)
             this.socket = new WebSocket(wsUrl);
+
+            const socket = this.socket;
             
-            this.socket.onopen = () => {
+            socket.onopen = () => {
                 console.log('WebSocket connection established');
                 this.connection.status = 'connected';
                 this.connection.statusText = 'Connected';
                 
                 // Initial request for data
-                this.socket.send('refresh');
+                if (this.socket === socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send('refresh');
+                }
             };
             
-            this.socket.onmessage = (event) => {
+            socket.onmessage = (event) => {
                 try {
                     console.log('WebSocket message received');
                     const data = JSON.parse(event.data);
@@ -342,7 +466,10 @@ function statusPage() {
                 }
             };
             
-            this.socket.onclose = () => {
+            socket.onclose = () => {
+                if (this.socket !== socket) {
+                    return;
+                }
                 console.log('WebSocket connection closed');
                 this.connection.status = 'disconnected';
                 this.connection.statusText = 'Disconnected';
@@ -359,7 +486,10 @@ function statusPage() {
                 }, 5000);
             };
             
-            this.socket.onerror = (error) => {
+            socket.onerror = (error) => {
+                if (this.socket !== socket) {
+                    return;
+                }
                 console.error('WebSocket error:', error);
                 this.connection.status = 'disconnected';
                 this.connection.statusText = 'Error';
