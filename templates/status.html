@@ -538,12 +538,22 @@ function statusPage() {
         // Refresh data using AJAX
         refreshData() {
             this.isRefreshing = true;
+            const startTime = Date.now();
             
             fetch('/api/status')
                 .then(response => response.json())
                 .then(data => {
                     this.updateData(data);
-                    this.isRefreshing = false;
+                    
+                    // Ensure minimum animation time of 500ms
+                    const elapsed = Date.now() - startTime;
+                    if (elapsed < 500) {
+                        setTimeout(() => {
+                            this.isRefreshing = false;
+                        }, 500 - elapsed);
+                    } else {
+                        this.isRefreshing = false;
+                    }
                 })
                 .catch(error => {
                     console.error('Error fetching data:', error);
