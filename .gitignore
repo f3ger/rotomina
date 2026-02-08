@@ -23,7 +23,6 @@ var/
 # Virtual Environment
 venv/
 ENV/
-env/
 
 # IDEs
 .idea/
@@ -53,3 +52,4 @@ config.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+/config.json.bak
