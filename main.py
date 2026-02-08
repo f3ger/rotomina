@@ -550,7 +550,13 @@ def save_config(config):
                     json.dump(config, f, indent=4, ensure_ascii=False)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(tmp_path, str(CONFIG_FILE))
+                try:
+                    os.replace(tmp_path, str(CONFIG_FILE))
+                except OSError:
+                    # Fallback for Docker bind-mounts or locked files
+                    # where os.replace() fails with "Device or resource busy"
+                    shutil.copy2(tmp_path, str(CONFIG_FILE))
+                    os.unlink(tmp_path)
             except Exception:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -1136,18 +1142,18 @@ def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error writing token to device: {str(e)}"
 
-async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[bool, str]:
+async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[bool, str, dict]:
     """
     Ensures the device has the correct DiscordData token before starting MapWorld.
     First validates the token against the API, then compares with device and syncs if needed.
     If token validation fails, sends Discord notification and blocks app startup.
-    
+
     Args:
         device_id: Device identifier
         max_retries: Number of retry attempts if writing fails
-        
+
     Returns:
-        Tuple[bool, str]: (success, error_message)
+        Tuple[bool, str, dict]: (success, error_message, furtif_config)
     """
     device_id = format_device_id(device_id)
     
@@ -1158,7 +1164,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
     # If no token is configured, skip the check
     if not stored_token:
         log("No device token configured, skipping token check", device_id, "CONFIG")
-        return True, ""
+        return True, "", {}
     
     # Get device details for Discord notification
     device_details = get_device_details(device_id)
@@ -1174,7 +1180,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
         # Send Discord notification about invalid token
         await notify_invalid_token(device_name, device_id, message)
         
-        return False, f"Token validation failed: {message}"
+        return False, f"Token validation failed: {message}", {}
     
     log(f"Token validated successfully: {message}", device_id, "CONFIG")
     
@@ -1190,7 +1196,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
     # Compare tokens (both should have normal '=' after JSON parsing)
     if device_token == stored_token:
         log("Device token matches stored token, no update needed", device_id, "CONFIG")
-        return True, ""
+        return True, "", furtif_config
     
     # Tokens don't match, need to write the correct token
     log(f"Device token mismatch, updating device config", device_id, "CONFIG")
@@ -1204,7 +1210,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
             verify_config = read_device_furtif_config(device_id)
             if verify_config and verify_config.get("DiscordData", "").strip() == stored_token:
                 log("Token successfully written and verified", device_id, "CONFIG")
-                return True, ""
+                return True, "", verify_config
             else:
                 log(f"Token verification failed, attempt {attempt + 1}/{max_retries}", device_id, "ERROR")
         
@@ -1221,11 +1227,8 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
             log("Waiting 10 seconds for MapWorld to create new config", device_id, "CONFIG")
             await asyncio.sleep(10)
             
-            # Stop the app
-            stop_cmd = f'adb -s {device_id} shell "am force-stop com.github.furtif.furtifformaps"'
-            subprocess.run(stop_cmd, shell=True, capture_output=True, text=True, timeout=10)
-            
-            await asyncio.sleep(2)
+            # Stop MapWorld
+            await stop_apps(device_id, stop_pogo=False)
             
             # Now try to write the token again
             log("Retrying token write after config recreation", device_id, "CONFIG")
@@ -1237,7 +1240,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
                 verify_config = read_device_furtif_config(device_id)
                 if verify_config and verify_config.get("DiscordData", "").strip() == stored_token:
                     log("Token successfully written after config recreation", device_id, "CONFIG")
-                    return True, ""
+                    return True, "", verify_config
             
             log(f"Token write failed after config recreation: {error_retry}", device_id, "ERROR")
         else:
@@ -1246,7 +1249,7 @@ async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[boo
         if attempt < max_retries - 1:
             await asyncio.sleep(2)
     
-    return False, f"Failed to update device token after {max_retries} attempts"
+    return False, f"Failed to update device token after {max_retries} attempts", {}
 
 # Optimized version of get_device_details that uses VersionManager
 def get_device_details(device_id: str) -> dict:
@@ -1432,6 +1435,39 @@ def sync_system_adb_key():
         return False
 
 # Optimized ADB Authorization
+async def stop_apps(device_id: str, stop_pogo: bool = True, stop_mapworld: bool = True) -> bool:
+    """
+    Stops Pokemon GO and/or MapWorld on the device.
+
+    Args:
+        device_id: Device identifier
+        stop_pogo: Whether to stop Pokemon GO (default: True)
+        stop_mapworld: Whether to stop MapWorld (default: True)
+
+    Returns:
+        bool: True if stop commands succeeded, False otherwise
+    """
+    device_id = format_device_id(device_id)
+
+    commands = []
+    if stop_mapworld:
+        commands.append("am force-stop com.github.furtif.furtifformaps")
+    if stop_pogo:
+        commands.append("am force-stop com.nianticlabs.pokemongo")
+
+    if not commands:
+        return True
+
+    stop_cmd = "; ".join(commands)
+    stop_result = adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
+
+    if stop_result.returncode != 0:
+        log(f"Warning: Failed to stop apps: {stop_result.stderr}", device_id, "LOGIN")
+        return False
+
+    await asyncio.sleep(2)
+    return True
+
 # Optimized App Start and Login Sequence
 async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
     """
@@ -1471,20 +1507,27 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
             log("Cannot establish ADB connection, app start failed", device_id, "ERROR")
             return False
         
-        # Ensure device has correct token before starting app
-        token_success, token_error = await ensure_device_token(device_id)
+        # Ensure device has correct token before starting app (also returns device config)
+        token_success, token_error, furtif_config = await ensure_device_token(device_id)
         if not token_success:
             log(f"Failed to ensure device token: {token_error}", device_id, "ERROR")
             return False
-        
-        # Force stop both apps in one command
-        stop_cmd = "am force-stop com.github.furtif.furtifformaps; am force-stop com.nianticlabs.pokemongo"
-        stop_result = adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
-        
-        if stop_result.returncode != 0:
-            log(f"Warning: Failed to stop apps: {stop_result.stderr}", device_id, "LOGIN")
-        
-        await asyncio.sleep(2)
+
+        # If ensure_device_token didn't return a config (e.g. no token configured), read it now
+        if not furtif_config:
+            furtif_config = read_device_furtif_config(device_id)
+
+        # Update stored config
+        if furtif_config:
+            update_device_info(device_id, {
+                "display_name": device.get("display_name", device_id),
+                "pogo_version": device.get("pogo_version", "N/A"),
+                "mitm_version": device.get("mitm_version", "N/A"),
+                "module_version": device.get("module_version", "N/A")
+            }, furtif_config)
+
+        # Force stop both apps
+        await stop_apps(device_id)
         
         # Start Furtif app
         start_result = adb_pool.execute_command(
@@ -1501,19 +1544,7 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
             
         # Wait for app to load
         await asyncio.sleep(5)
-        
-        # Read fresh Furtif config from device for current startup behavior
-        furtif_config = read_device_furtif_config(device_id)
-        
-        # Update stored config
-        if furtif_config:
-            update_device_info(device_id, {
-                "display_name": device.get("display_name", device_id),
-                "pogo_version": device.get("pogo_version", "N/A"),
-                "mitm_version": device.get("mitm_version", "N/A"),
-                "module_version": device.get("module_version", "N/A")
-            }, furtif_config)
-        
+
         # Execute start sequence with Furtif config
         start_success = await optimized_login_sequence(device_id, furtif_config=furtif_config)
         
@@ -1655,9 +1686,7 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
         async def restart_mapworld():
             """Restarts MapWorld app"""
             log("Restarting MapWorld", device_id, "LOGIN")
-            stop_cmd = "am force-stop com.github.furtif.furtifformaps"
-            adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
-            await asyncio.sleep(2)
+            await stop_apps(device_id, stop_pogo=False)
             
             start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
             adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
