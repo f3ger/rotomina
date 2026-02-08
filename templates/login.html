@@ -21,7 +21,7 @@
             </div>
             {% endif %}
             
-            <form hx-post="/login" hx-redirect="true" x-on:submit="isSubmitting = true">
+            <form action="/login" method="post" x-on:submit="isSubmitting = true">
                 <div class="mb-4">
                     <label class="block text-gray-300 text-sm font-bold mb-2" for="username">
                         Username
