@@ -89,7 +89,7 @@
 
                     <div class="hidden sm:flex items-center">
                         {% if request.session.get("logged_in") %}
-                            <span class="text-gray-300 mr-4">{{ request.session.get("username") }}</span>
+                            <span class="text-gray-300 mr-4">Welcome <strong>{{ request.session.get("username") }}</strong></span>
                             <a href="/logout" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</a>
                         {% endif %}
                     </div>
@@ -108,12 +108,13 @@
 
                 <div id="mobile-nav" class="sm:hidden" x-show="mobileOpen" x-cloak @click.away="mobileOpen = false">
                     <div class="pt-2 pb-3 space-y-1 border-t border-gray-700">
-                        <a href="/status" class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Status</a>
-                        <a href="/settings" class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Settings</a>
-
-                        {% if request.session.get("logged_in") %}
+                        {% if request.session.get("logged_in") %}                 
+                            <div class="px-3 pt-2 text-sm text-gray-400" x-text="''"></div>
+                            <div class="px-3 py-2 text-sm text-gray-300">Welcome <strong>{{ request.session.get("username") }}</strong></div>
                             <a href="/logout" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Logout</a>
                         {% endif %}
+                        <a href="/status" class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Status</a>
+                        <a href="/settings" class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Settings</a>
                     </div>
                 </div>
             </div>
