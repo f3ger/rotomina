@@ -53,3 +53,4 @@ config.json
 ehthumbs.db
 Thumbs.db
 /config.json.bak
+/data/adb/adbkey.pub
