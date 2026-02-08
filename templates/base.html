@@ -36,31 +36,28 @@
     <meta name="application-name" content="Rotomina" />
     
     <!-- Tailwind CSS -->
-    <link rel="stylesheet" href="/static/css/tailwind.css">
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        // Tailwind config for compatibility
-        tailwind = {
-            config: {
-                darkMode: 'class',
-                theme: {
-                    extend: {
-                        colors: {
-                            primary: {
-                                50: '#f0f9ff',
-                                100: '#e0f2fe',
-                                500: '#3b82f6',
-                                600: '#2563eb',
-                                700: '#1d4ed8',
-                            },
-                            dark: {
-                                800: '#1e1e1e',
-                                900: '#121212'
-                            }
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        },
+                        dark: {
+                            800: '#1e1e1e',
+                            900: '#121212'
                         }
                     }
                 }
             }
-        };
+        }
     </script>
     
     <!-- Alpine.js -->
