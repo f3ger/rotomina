@@ -91,6 +91,21 @@
                         <div class="text-xs text-gray-400">Memory</div>
                         <div class="text-gray-200" x-text="formatMemory(device.mem_free)"></div>
                     </div>
+                    <template x-if="device === sortedDevices[0]">
+                        <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                            <div class="text-xs text-gray-400">Token</div>
+                            <template x-if="'{{ config.device_token }}'.trim()">
+                                {% if token_valid %}
+                                <div class="text-green-400">Valid</div>
+                                {% else %}
+                                <div class="text-red-400">Invalid</div>
+                                {% endif %}
+                            </template>
+                            <template x-if="!'{{ config.device_token }}'.trim()">
+                                <div class="text-gray-400">Not Set</div>
+                            </template>
+                        </div>
+                    </template>
                 </div>
 
                 <div class="mt-3 grid grid-cols-2 gap-2">
@@ -158,7 +173,7 @@
             <table class="min-w-full divide-y divide-gray-700">
                 <thead class="bg-dark-800">
                     <tr>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('name')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('name')">
                             Name
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'name' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'name'">
@@ -166,7 +181,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden md:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('ip')">
+                        <th scope="col" class="hidden md:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('ip')">
                             IP / ID
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'ip' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'ip'">
@@ -174,7 +189,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('adb')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('adb')">
                             ADB
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'adb' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'adb'">
@@ -182,7 +197,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('alive')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('alive')">
                             Alive
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'alive' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'alive'">
@@ -190,7 +205,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden lg:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('runtime')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('runtime')">
                             Runtime
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'runtime' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'runtime'">
@@ -198,7 +213,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden lg:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('control')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('control')">
                             Control
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'control' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'control'">
@@ -206,7 +221,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('pogo')">
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('pogo')">
                             PoGo
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'pogo' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'pogo'">
@@ -214,7 +229,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('mitm')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('mitm')">
                             MITM
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'mitm' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'mitm'">
@@ -222,7 +237,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('module')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('module')">
                             PIF
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'module' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'module'">
@@ -230,7 +245,7 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" @click="sortTable('memory')">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('memory')">
                             Memory
                             <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'memory' }">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'memory'">
@@ -238,7 +253,15 @@
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('token')">
+                            Token
+                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'token' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'token'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                                </svg>
+                            </span>
+                        </th>
+                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider align-top">
                             Actions
                         </th>
                     </tr>
@@ -275,7 +298,7 @@
                                 <span x-text="device.is_alive ? '✅' : '❌'" :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
                             </td>
                             <!-- New Runtime column -->
-                            <td class="hidden lg:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <span x-text="formatRuntime(device.runtime)"></span>
                                     <template x-if="device.last_runtime && device.last_runtime > 60">
@@ -285,13 +308,35 @@
                                     </template>
                                 </div>
                             </td>
-                            <td class="hidden lg:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <span class="px-2 py-1 text-xs rounded-full" :class="device.control_enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'" x-text="device.control_enabled ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo"></td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.mitm"></td>
-                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.module"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.module"></td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="formatMemory(device.mem_free)"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                                <template x-if="device === sortedDevices[0]">
+                                    <template x-if="'{{ config.device_token }}'.trim()">
+                                        {% if token_valid %}
+                                        <span class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                                        {% else %}
+                                        <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                        {% endif %}
+                                    </template>
+                                    <template x-if="!'{{ config.device_token }}'.trim()">
+                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                                    </template>
+                                </template>
+                                <template x-if="device !== sortedDevices[0]">
+                                    <template x-if="'{{ config.device_token }}'.trim()">
+                                        <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                    </template>
+                                    <template x-if="!'{{ config.device_token }}'.trim()">
+                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                                    </template>
+                                </template>
+                            </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
                                 <div class="dropdown" x-data="{ open: false }">
                                     <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">

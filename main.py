@@ -4835,7 +4835,8 @@ async def get_status_data():
             "mem_free": 0,
             "last_update": 0,
             "adb_status": False,
-            "adb_error": "No connection"
+            "adb_error": "No connection",
+            "last_runtime": None
         }
         status = {**default_status, **status}
         
@@ -4862,10 +4863,8 @@ async def get_status_data():
             "control_enabled": dev.get("control_enabled", False),
             "in_update": in_update,
             "update_info": update_info,
-            "runtime": current_runtime,
-            "runtime_formatted": runtime_formatted,
-            "last_runtime": last_runtime,
-            "last_runtime_formatted": last_runtime_formatted
+            "runtime": runtime_formatted,
+            "last_runtime": last_runtime_formatted
         })
     
     return {
@@ -5070,6 +5069,24 @@ def status_page(request: Request):
     config = load_config()
     devices = []
     
+    # Check if token is valid - get device_token (main field)
+    token_valid = False
+    device_token = config.get("device_token", "")
+    
+    if device_token:
+        try:
+            import asyncio
+            # Run validation in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            is_valid, message = loop.run_until_complete(validate_device_token(device_token))
+            token_valid = is_valid
+            log(f"Token validation result in status: {is_valid}, message: {message}", None, "CONFIG")
+            loop.close()
+        except Exception as e:
+            log(f"Error validating token in status: {e}", None, "ERROR")
+            token_valid = False
+    
     # Get PoGo version info for buttons
     versions = get_available_versions()
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
@@ -5116,6 +5133,7 @@ def status_page(request: Request):
         "username": request.session.get("username", ""),
         "devices": devices,
         "config": config,
+        "token_valid": token_valid,
         "now": time.time(),
         "pogo_latest": pogo_latest,
         "pogo_previous": pogo_previous
@@ -5190,9 +5208,17 @@ async def save_device_token(request: Request, device_token: str = Form("")):
     
     token = device_token.strip()
     
-    # TEMP: Skip validation for testing
+    # Validate token if provided
     if token:
-        log(f"TEMP: Skipping validation for token '{token[:20]}...'", None, "CONFIG")
+        try:
+            is_valid, message = await validate_device_token(token)
+            if not is_valid:
+                log(f"Token validation failed: {message}", None, "ERROR")
+                return RedirectResponse(url=f"/settings?error=Invalid token: {message}", status_code=302)
+            log(f"Token validation successful: {message}", None, "CONFIG")
+        except Exception as e:
+            log(f"Error validating token: {e}", None, "ERROR")
+            return RedirectResponse(url=f"/settings?error=Token validation error: {e}", status_code=302)
     
     # Save the token to the first device's furtif_config.DiscordData field
     config = load_config()
