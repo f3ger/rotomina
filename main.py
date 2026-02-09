@@ -5057,7 +5057,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Handle different message types
                 if message == "refresh":
                     # Send current status without creating new connection
-                    status_data = get_api_status()
+                    status_data = await get_status_data()
                     await websocket.send_json(status_data)
                     
                 elif message == "ping":
