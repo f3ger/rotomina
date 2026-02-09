@@ -83,21 +83,76 @@ def clear_display_name_cache(device_id: str = None):
     else:
         _display_name_cache.clear()
 
-# WebSocket Connection Manager
+# WebSocket Connection Manager - Optimized with connection pooling and keep-alive
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
-
+        self.connection_pool: List[WebSocket] = []  # Pool for reusing connections
+        self.max_connections = 50  # Maximum concurrent connections
+        self.connection_timeout = 300  # 5 minutes timeout
+        self.last_cleanup = time.time()
+        
+    async def get_connection(self) -> Optional[WebSocket]:
+        """Get or create a connection from the pool"""
+        # Clean up expired connections
+        current_time = time.time()
+        self.connection_pool = [
+            conn for conn in self.connection_pool
+            if current_time - getattr(conn, 'last_used', 0) < self.connection_timeout
+        ]
+        
+        # Return existing connection if available
+        for conn in self.connection_pool:
+            if not hasattr(conn, 'closed') or conn.closed:
+                conn.last_used = current_time
+                return conn
+        
+        # If no available connections and under limit, create new one
+        if len(self.active_connections) + len(self.connection_pool) < self.max_connections:
+            return None  # Signal that new connection needed
+        
+        return self.connection_pool[0] if self.connection_pool else None
+    
     async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.add(websocket)
-        log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
-
-    def disconnect(self, websocket: WebSocket):
+        """Handle new WebSocket connection with pooling"""
+        # Check if we're at connection limit
+        if len(self.active_connections) + len(self.connection_pool) >= self.max_connections:
+            await websocket.close(code=1013, reason="Server overloaded")
+            log("Connection rejected: server at maximum capacity", None, "WARNING")
+            return
+        
+        # Get or create connection from pool
+        connection = await self.get_connection()
+        if connection is None:
+            # No available connections, accept new one
+            await websocket.accept()
+            self.active_connections.add(websocket)
+            log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
+        else:
+            # Reuse existing connection
+            self.active_connections.add(connection)
+            log(f"WebSocket client connected ({len(self.active_connections)} active) [reused]", None, "API")
+    
+    async def disconnect(self, websocket: WebSocket):
+        """Handle WebSocket disconnection with cleanup"""
         self.active_connections.discard(websocket)
-        log(f"WebSocket client disconnected ({len(self.active_connections)} remaining)", None, "API")
-
+        
+        # Mark connection as closed but keep in pool for potential reuse
+        if hasattr(websocket, 'closed'):
+            websocket.closed = True
+        
+        # Clean up old connections periodically
+        current_time = time.time()
+        if current_time - self.last_cleanup > 60:  # Clean every minute
+            self.connection_pool = [
+                conn for conn in self.connection_pool
+                if current_time - getattr(conn, 'last_used', 0) < self.connection_timeout
+            ]
+            self.last_cleanup = current_time
+            log(f"Connection pool cleaned, {len(self.connection_pool)} active connections", None, "DEBUG")
+    
     async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients"""
         disconnected_websockets = set()
         
         for connection in self.active_connections:
@@ -4990,25 +5045,28 @@ templates.env.globals.update({
 # WebSocket Routes
 @app.websocket("/ws/status")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time device status updates"""
+    """Optimized WebSocket endpoint with connection pooling"""
     await ws_manager.connect(websocket)
+    
     try:
-        # Initial data
-        status_data = await get_status_data()
-        await websocket.send_json(status_data)
-        
-        # Keep connection alive
         while True:
+            # Receive message with timeout
             try:
-                # Wait for client messages
-                data = await websocket.receive_text()
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
                 
-                # Handle client commands
-                if data == "refresh":
-                    # Manual refresh requested
-                    status_data = await get_status_data()
+                # Handle different message types
+                if message == "refresh":
+                    # Send current status without creating new connection
+                    status_data = get_api_status()
                     await websocket.send_json(status_data)
-                elif data.startswith("refresh_device:"):
+                    
+                elif message == "ping":
+                    await websocket.send_text("pong")
+                    
+                else:
+                    # Unknown message, log and continue
+                    log(f"Unknown WebSocket message: {message}", None, "DEBUG")
+                    
                     # Refresh specific device data
                     device_ip = data.split(":", 1)[1]
                     if device_ip:
