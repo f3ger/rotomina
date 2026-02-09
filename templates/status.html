@@ -102,21 +102,18 @@
                         <div class="text-xs text-gray-400">Memory</div>
                         <div class="text-gray-200" x-text="formatMemory(device.mem_free)"></div>
                     </div>
-                    <template x-if="device === sortedDevices[0]">
-                        <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
-                            <div class="text-xs text-gray-400">Token</div>
-                            <template x-if="'{{ config.device_token }}'.trim()">
-                                {% if token_valid %}
-                                <div class="text-green-400">Valid</div>
-                                {% else %}
-                                <div class="text-red-400">Invalid</div>
-                                {% endif %}
-                            </template>
-                            <template x-if="!'{{ config.device_token }}'.trim()">
-                                <div class="text-gray-400">Not Set</div>
-                            </template>
-                        </div>
-                    </template>
+                    <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
+                        <div class="text-xs text-gray-400">Token</div>
+                        {% if config.device_token %}
+                        {% if token_valid %}
+                        <div class="text-green-400">Valid</div>
+                        {% else %}
+                        <div class="text-red-400">Invalid</div>
+                        {% endif %}
+                        {% else %}
+                        <div class="text-gray-400">Not Set</div>
+                        {% endif %}
+                    </div>
                 </div>
 
                 <div class="mt-3 grid grid-cols-2 gap-2">
@@ -424,31 +421,18 @@
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
                                 x-text="formatMemory(device.mem_free)"></td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                <template x-if="device === sortedDevices[0]">
-                                    <template x-if="'{{ config.device_token }}'.trim()">
-                                        {% if token_valid %}
-                                        <span
-                                            class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
-                                        {% else %}
-                                        <span
-                                            class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
-                                        {% endif %}
-                                    </template>
-                                    <template x-if="!'{{ config.device_token }}'.trim()">
-                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
-                                            Set</span>
-                                    </template>
-                                </template>
-                                <template x-if="device !== sortedDevices[0]">
-                                    <template x-if="'{{ config.device_token }}'.trim()">
-                                        <span
-                                            class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
-                                    </template>
-                                    <template x-if="!'{{ config.device_token }}'.trim()">
-                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
-                                            Set</span>
-                                    </template>
-                                </template>
+                                {% if config.device_token %}
+                                {% if token_valid %}
+                                <span
+                                    class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                                {% else %}
+                                <span
+                                    class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                {% endif %}
+                                {% else %}
+                                <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
+                                    Set</span>
+                                {% endif %}
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
                                 <div class="dropdown" x-data="{ open: false }">
