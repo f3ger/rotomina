@@ -40,6 +40,18 @@ device_status_cache = {}
 update_lock = threading.Lock()
 config_lock = threading.RLock()
 update_in_progress = False
+
+# Helper Functions
+def update_progress(progress: int):
+    """
+    Updates the global progress indicator for UI updates
+    
+    Args:
+        progress: Integer value between 0-100 representing progress percentage
+    """
+    global current_progress
+    current_progress = progress
+
 current_progress = 0
 devices_in_update = {}  # Format: {device_id: {"in_update": True, "update_type": "pogo/mitm/pif", "started_at": timestamp}}
 device_runtimes = {}
@@ -4769,18 +4781,17 @@ async def update_api_status():
         # Use the configured check interval or default to 15 seconds
         check_interval = config.get("api_check_interval", 15)
         await asyncio.sleep(check_interval)
-        
-# Helper Functions for Memory
-def format_memory(value):
+
+def format_memory(mem_kb: int) -> str:
     """
     Converts memory values to readable formats
     Input value is in KB (not Bytes)!
     """
     try:
-        if not value:
+        if not mem_kb:
             return "N/A"
             
-        size = float(value)
+        size = float(mem_kb)
         
         if size < 1024:
             return f"{size:.1f} kB".replace(".", ",")
