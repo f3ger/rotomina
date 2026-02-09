@@ -435,15 +435,27 @@
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 {% if config.device_token %}
                                 {% if token_valid %}
-                                <span
-                                    class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                                <span class="inline-flex items-center gap-1 text-green-400">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                                    </svg>
+                                    Valid
+                                </span>
                                 {% else %}
-                                <span
-                                    class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                <span class="inline-flex items-center gap-1 text-red-400">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                    Invalid
+                                </span>
                                 {% endif %}
                                 {% else %}
-                                <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
-                                    Set</span>
+                                <span class="inline-flex items-center gap-1 text-gray-400">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/>
+                                    </svg>
+                                    Not Set
+                                </span>
                                 {% endif %}
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">

@@ -90,14 +90,14 @@
                         </a>
                     </div>
 
-                    <div class="hidden ml-10 items-center space-x-4">
+                    <div class="hidden md:flex ml-10 items-center space-x-4">
                         <a href="/status"
                             class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Status</a>
                         <a href="/settings"
                             class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Settings</a>
                     </div>
 
-                    <div class="hidden items-center">
+                    <div class="hidden md:flex items-center">
                         {% if request.session.get("logged_in") %}
                         <span class="text-gray-300 mr-4">Welcome <strong>{{ request.session.get("username")
                                 }}</strong></span>
@@ -106,7 +106,7 @@
                         {% endif %}
                     </div>
 
-                    <div class="flex items-center">
+                    <div class="flex items-center md:hidden">
                         <button type="button"
                             class="inline-flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 focus:outline-none"
                             @click="mobileOpen = !mobileOpen" :aria-expanded="mobileOpen.toString()"
@@ -125,7 +125,7 @@
                     </div>
                 </div>
 
-                <div id="mobile-nav" x-show="mobileOpen" x-cloak @click.away="mobileOpen = false">
+                <div id="mobile-nav" class="md:hidden" x-show="mobileOpen" x-cloak @click.away="mobileOpen = false">
                     <div class="pt-2 pb-3 space-y-1 border-t border-gray-700">
                         {% if request.session.get("logged_in") %}
                         <div class="px-3 pt-2 text-sm text-gray-400" x-text="''"></div>
