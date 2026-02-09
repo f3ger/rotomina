@@ -78,13 +78,6 @@
                             </div>
                         </div>
                         <div class="shrink-0 flex items-center gap-3">
-                            <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
-                                class="p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
-                                title="Remove device">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                </svg>
-                            </button>
                             <form action="/devices/toggle-control" method="post" class="m-0">
                                 <input type="hidden" name="device_ip" value="{{ device.ip }}">
                                 <label class="inline-flex items-center cursor-pointer">
@@ -135,6 +128,13 @@
                                 <span x-show="success" class="text-white">OK</span>
                                 <span x-show="pending"
                                     class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
+                            </button>
+                            <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
+                                class="ml-2 p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
+                                title="Remove device">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
                             </button>
                         </div>
                     </div>
@@ -242,7 +242,7 @@
                     </tbody>
                 </table>
             </div>
-            <form id="removeForm" @submit.prevent="removeSelectedDevices()" class="mt-4">
+            <form id="removeForm" @submit.prevent="removeSelectedDevices()" class="mt-4 hidden md:block">
                 <button type="submit"
                     class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center">
                     <svg class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
