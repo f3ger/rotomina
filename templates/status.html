@@ -74,10 +74,10 @@
                     </div>
 
                     <div class="flex items-center gap-2 flex-none">
-                        <span class="text-sm" x-text="device.status ? '✅' : '❌'"
-                            :class="device.status ? 'text-green-500' : 'text-red-500'"></span>
-                        <span class="text-sm" x-text="device.is_alive ? '✅' : '❌'"
-                            :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
+                        <span class="px-1.5 py-0.5 text-xs rounded-full"
+                            :class="device.status ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'">ADB</span>
+                        <span class="px-1.5 py-0.5 text-xs rounded-full"
+                            :class="device.is_alive ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'">Alive</span>
                     </div>
                 </div>
 
@@ -372,11 +372,15 @@
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <template x-if="device.status">
-                                        <span class="text-green-500">✅</span>
+                                        <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        </svg>
                                     </template>
                                     <template x-if="!device.status">
                                         <div>
-                                            <span class="text-red-500 relative">❌</span>
+                                            <svg class="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                            </svg>
                                             <template x-if="device.adb_error">
                                                 <span
                                                     class="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-xs text-white">!</span>
@@ -392,8 +396,16 @@
                                 </div>
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                <span x-text="device.is_alive ? '✅' : '❌'"
-                                    :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
+                                <template x-if="device.is_alive">
+                                    <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                    </svg>
+                                </template>
+                                <template x-if="!device.is_alive">
+                                    <svg class="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </template>
                             </td>
                             <!-- New Runtime column -->
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">

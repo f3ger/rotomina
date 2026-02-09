@@ -13,6 +13,7 @@ import tempfile
 import os
 import platform
 import hashlib
+import base64
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from functools import wraps
@@ -1026,11 +1027,15 @@ def read_device_furtif_config(device_id: str) -> dict:
     furtif_config = {}
     
     try:
-        cmd = f'adb -s {device_id} shell "su -c \'cat /data/data/com.github.furtif.furtifformaps/files/config.json\'"'
+        cmd = f'adb -s {device_id} shell "su -c \'base64 /data/data/com.github.furtif.furtifformaps/files/config.json\'"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
-        
+
         if result.returncode == 0 and result.stdout:
-            raw_output = result.stdout.strip()
+            try:
+                raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8').strip()
+            except Exception as decode_err:
+                log(f"Base64 decode failed, falling back to raw output: {decode_err}", device_id, "CONFIG")
+                raw_output = result.stdout.strip()
             
             # Use regex to extract values (works with both JSON and JS object format)
             # Extract DiscordData - matches both quoted and unquoted values
@@ -1096,14 +1101,18 @@ def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
     config_path = "/data/data/com.github.furtif.furtifformaps/files/config.json"
     
     try:
-        # First, read the current config from device
-        read_cmd = f'adb -s {device_id} shell "su -c \'cat {config_path}\'"'
+        # First, read the current config from device (using base64 to preserve special chars)
+        read_cmd = f'adb -s {device_id} shell "su -c \'base64 {config_path}\'"'
         result = subprocess.run(read_cmd, shell=True, capture_output=True, text=True, timeout=10)
-        
+
         if result.returncode != 0 or not result.stdout:
             return False, f"Could not read config from device: {result.stderr}"
-        
-        raw_output = result.stdout.strip()
+
+        try:
+            raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8').strip()
+        except Exception as decode_err:
+            log(f"Base64 decode failed, falling back to raw output: {decode_err}", device_id, "CONFIG")
+            raw_output = result.stdout.strip()
         
         # Check if config has content
         if not raw_output or '{' not in raw_output:
@@ -1430,7 +1439,7 @@ def ensure_adb_keys() -> str:
                 log(f"Failed to generate public key: {str(e)}", None, "ERROR")
         
         if public_key_exists:
-            with open(adb_public_key, "r") as f:
+            with open(adb_public_key, "r", encoding="utf-8") as f:
                 content = f.read().strip()
                 log(f"Found ADB public key ({len(content)} bytes)", None, "CONFIG")
                 return content
@@ -1464,14 +1473,14 @@ def sync_system_adb_key():
             log(f"Creating additional keys directory: {additional_keys_dir}", None, "CONFIG")
             additional_keys_dir.mkdir(parents=True, exist_ok=True)
         
-        with open(system_key_path, "r") as f:
+        with open(system_key_path, "r", encoding="utf-8") as f:
             key_content = f.read().strip()
             
         if not key_content:
             log("System ADB key is empty, nothing to sync", None, "CONFIG")
             return False
             
-        with open(target_key_path, "w") as f:
+        with open(target_key_path, "w", encoding="utf-8") as f:
             f.write(key_content)
             
         log(f"Synchronized system ADB key to {target_key_path}", None, "CONFIG")
@@ -5631,19 +5640,19 @@ async def websocket_htmx_endpoint(websocket: WebSocket):
             "partials/device_table.html", 
             {"request": {}, "devices": status_data["devices"]}
         )
-        await websocket.send_text(html_response.body.decode())
-        
+        await websocket.send_text(html_response.body.decode('utf-8'))
+
         while True:
             try:
                 data = await websocket.receive_text()
-                
+
                 if data == "refresh":
                     status_data = await get_status_data()
                     html_response = templates.TemplateResponse(
-                        "partials/device_table.html", 
+                        "partials/device_table.html",
                         {"request": {}, "devices": status_data["devices"]}
                     )
-                    await websocket.send_text(html_response.body.decode())
+                    await websocket.send_text(html_response.body.decode('utf-8'))
             except asyncio.TimeoutError:
                 await asyncio.sleep(1)
     except WebSocketDisconnect:

@@ -78,10 +78,13 @@
                             </div>
                         </div>
                         <div class="shrink-0 flex items-center gap-3">
-                            <div class="flex items-center">
-                                <input type="checkbox" form="removeForm" name="devices" value="{{ device.ip }}"
-                                    class="w-4 h-4 text-blue-600 rounded border-gray-700 bg-gray-700 focus:ring-blue-500">
-                            </div>
+                            <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
+                                class="p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
+                                title="Remove device">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                            </button>
                             <form action="/devices/toggle-control" method="post" class="m-0">
                                 <input type="hidden" name="device_ip" value="{{ device.ip }}">
                                 <label class="inline-flex items-center cursor-pointer">
@@ -92,6 +95,7 @@
                                             class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                                         </div>
                                     </div>
+                                    <span class="ml-2 text-xs text-gray-400">Control</span>
                                 </label>
                             </form>
                         </div>
