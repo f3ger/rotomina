@@ -15,7 +15,7 @@
             "mitm_version": "2.83",
             "module_version": "",
             "furtif_config": {
-                "DiscordData": "YOUR_TOKEN_HERE",
+                "DiscordData": "token_here",
                 "RotomTryAutoStart": false,
                 "RotomDeviceName": "demo",
                 "IsRotomMode": true,
@@ -24,14 +24,13 @@
         }
     ],
     "rotomApiUrl": "http://rotom.example.com/api/status",
-    "rotomApiUser": "YOUR_USERNAME",
-    "rotomApiPass": "YOUR_PASSWORD",
+    "rotomApiUser": "user_name",
+    "rotomApiPass": "password",
     "api_check_interval": 60,
     "memory_threshold": 100,
-    "discord_webhook_url": "YOUR_WEBHOOK_URL",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1234567890/abcdefg",
     "pif_auto_update_enabled": false,
     "pogo_auto_update_enabled": true,
     "preferred_module_type": "fix",
-    "device_token": "YOUR_TOKEN_HERE",
-    "token_validation_url": "https://protomines.ddns.net/api/access/get_access_status.php"
+    "device_token": "device_token"
 }
