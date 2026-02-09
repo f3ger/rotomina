@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <link rel="icon" href="/static/assets/favicon.png" type="image/png" />
@@ -14,16 +15,16 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-  
+
     <!-- Security Headers (Only those that work via meta) -->
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
-  
+
     <!-- Performance & Compatibility -->
     <meta http-equiv="x-ua-compatible" content="ie=edge" />
     <meta name="format-detection" content="telephone=no" />
-  
+
     <!-- SEO -->
     <meta name="robots" content="index, follow" />
     <meta name="author" content="f3ger" />
@@ -34,7 +35,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Rotomina" />
     <meta name="application-name" content="Rotomina" />
-    
+
     <!-- Tailwind CSS -->
     <script src="/static/js/tailwindcss.js"></script>
     <script>
@@ -59,19 +60,22 @@
             }
         }
     </script>
-    
+
     <!-- Alpine.js -->
     <script defer src="/static/js/alpine-cdn.min.js"></script>
-    
+
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.4"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
-    
+
     <!-- Custom styles -->
     <style>
-        [x-cloak] { display: none !important; }
+        [x-cloak] {
+            display: none !important;
+        }
     </style>
 </head>
+
 <body class="bg-dark-900 text-gray-100 min-h-screen">
     <div class="flex flex-col min-h-screen">
         <!-- Navigation -->
@@ -79,31 +83,43 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between h-16">
                     <div class="flex items-center">
-                        <a href="/" class="flex items-center text-xl font-bold text-white hover:text-gray-300 transition-colors">
+                        <a href="/"
+                            class="flex items-center text-xl font-bold text-white hover:text-gray-300 transition-colors">
                             <img src="/static/assets/favicon.png" alt="Rotomina" class="h-6 w-6 mr-2">
                             Rotomina
                         </a>
                     </div>
 
                     <div class="hidden sm:flex ml-10 items-center space-x-4">
-                        <a href="/status" class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Status</a>
-                        <a href="/settings" class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Settings</a>
+                        <a href="/status"
+                            class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Status</a>
+                        <a href="/settings"
+                            class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} px-3 py-2 rounded-md text-sm font-medium">Settings</a>
                     </div>
 
                     <div class="hidden sm:flex items-center">
                         {% if request.session.get("logged_in") %}
-                            <span class="text-gray-300 mr-4">Welcome <strong>{{ request.session.get("username") }}</strong></span>
-                            <a href="/logout" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</a>
+                        <span class="text-gray-300 mr-4">Welcome <strong>{{ request.session.get("username")
+                                }}</strong></span>
+                        <a href="/logout"
+                            class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium">Logout</a>
                         {% endif %}
                     </div>
 
                     <div class="flex items-center sm:hidden">
-                        <button type="button" class="inline-flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 focus:outline-none" @click="mobileOpen = !mobileOpen" :aria-expanded="mobileOpen.toString()" aria-controls="mobile-nav">
-                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="!mobileOpen">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        <button type="button"
+                            class="inline-flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 focus:outline-none"
+                            @click="mobileOpen = !mobileOpen" :aria-expanded="mobileOpen.toString()"
+                            aria-controls="mobile-nav">
+                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                x-show="!mobileOpen">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 6h16M4 12h16M4 18h16" />
                             </svg>
-                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="mobileOpen">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                x-show="mobileOpen">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12" />
                             </svg>
                         </button>
                     </div>
@@ -111,27 +127,32 @@
 
                 <div id="mobile-nav" class="sm:hidden" x-show="mobileOpen" x-cloak @click.away="mobileOpen = false">
                     <div class="pt-2 pb-3 space-y-1 border-t border-gray-700">
-                        {% if request.session.get("logged_in") %}                 
-                            <div class="px-3 pt-2 text-sm text-gray-400" x-text="''"></div>
-                            <div class="px-3 py-2 text-sm text-gray-300">Welcome <strong>{{ request.session.get("username") }}</strong></div>
-                            <a href="/logout" class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Logout</a>
+                        {% if request.session.get("logged_in") %}
+                        <div class="px-3 pt-2 text-sm text-gray-400" x-text="''"></div>
+                        <div class="px-3 py-2 text-sm text-gray-300">Welcome <strong>{{ request.session.get("username")
+                                }}</strong></div>
+                        <a href="/logout"
+                            class="text-gray-300 hover:bg-gray-700 hover:text-white block px-3 py-2 rounded-md text-base font-medium">Logout</a>
                         {% endif %}
-                        <a href="/status" class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Status</a>
-                        <a href="/settings" class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Settings</a>
+                        <a href="/status"
+                            class="{% if request.url.path == '/status' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Status</a>
+                        <a href="/settings"
+                            class="{% if request.url.path == '/settings' %}bg-gray-700 text-white{% else %}text-gray-300 hover:bg-gray-700 hover:text-white{% endif %} block px-3 py-2 rounded-md text-base font-medium">Settings</a>
                     </div>
                 </div>
             </div>
         </nav>
-        
+
         <!-- Main content -->
         <main class="flex-grow container mx-auto px-4 py-6">
             {% block content %}{% endblock %}
         </main>
-        
+
         <!-- Footer -->
         <footer class="bg-dark-800 text-center py-4 text-gray-400 text-sm">
             <p>Rotomina - Modern Management Dashboard</p>
         </footer>
     </div>
 </body>
+
 </html>

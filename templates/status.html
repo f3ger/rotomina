@@ -1,54 +1,61 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div x-data="statusPage()" x-init="init()" x-cloak
-     data-pogo-latest="{{ pogo_latest }}"
-     data-pogo-previous="{{ pogo_previous }}"
-     data-pogo-auto-update-enabled="{% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %}"
-     data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}">
+<div x-data="statusPage()" x-init="init()" x-cloak data-pogo-latest="{{ pogo_latest }}"
+    data-pogo-previous="{{ pogo_previous }}"
+    data-pogo-auto-update-enabled="{% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %}"
+    data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}">
     <!-- Header with status information -->
     <div class="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mb-6">
         <div class="min-w-0">
-        <h1 class="text-2xl font-bold text-white">
-            Device Overview
-            <span class="relative inline-flex h-3 w-3 ml-2" :class="connection.status === 'connected' ? 'bg-green-500' : (connection.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500')" 
-                  x-tooltip="connection.status">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" 
-                      :class="connection.status === 'connected' ? 'bg-green-400' : (connection.status === 'connecting' ? 'bg-yellow-400' : 'bg-red-400')"></span>
-            </span>
-            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" 
-                  :class="connection.status === 'connected' ? 'bg-green-100 text-green-800' : (connection.status === 'connecting' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800')"
-                  x-text="connection.statusText"></span>
-            <span class="hidden sm:inline text-sm text-gray-400 ml-2" x-text="'Last updated: ' + lastUpdated"></span>
-        </h1>
+            <h1 class="text-2xl font-bold text-white">
+                Device Overview
+                <span class="relative inline-flex h-3 w-3 ml-2"
+                    :class="connection.status === 'connected' ? 'bg-green-500' : (connection.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500')"
+                    x-tooltip="connection.status">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                        :class="connection.status === 'connected' ? 'bg-green-400' : (connection.status === 'connecting' ? 'bg-yellow-400' : 'bg-red-400')"></span>
+                </span>
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                    :class="connection.status === 'connected' ? 'bg-green-100 text-green-800' : (connection.status === 'connecting' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800')"
+                    x-text="connection.statusText"></span>
+                <span class="hidden sm:inline text-sm text-gray-400 ml-2"
+                    x-text="'Last updated: ' + lastUpdated"></span>
+            </h1>
 
-        <div class="sm:hidden text-sm text-gray-400" x-text="'Last updated: ' + lastUpdated"></div>
+            <div class="sm:hidden text-sm text-gray-400" x-text="'Last updated: ' + lastUpdated"></div>
         </div>
-        
+
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-3">
-            <button type="button" @click="pogoUpdateAll()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+            <button type="button" @click="pogoUpdateAll()"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                 <span>PoGo Update All (<span x-text="pogoLatest"></span>)</span>
             </button>
-            
-            <button type="button" @click="refreshData()" class="inline-flex items-center px-4 py-2 border border-gray-700 text-sm font-medium rounded-md text-gray-200 bg-gray-800 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" :class="{ 'animate-spin': isRefreshing }">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+
+            <button type="button" @click="refreshData()"
+                class="inline-flex items-center px-4 py-2 border border-gray-700 text-sm font-medium rounded-md text-gray-200 bg-gray-800 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor" :class="{ 'animate-spin': isRefreshing }">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 Refresh
             </button>
         </div>
     </div>
-    
+
     <!-- Update status indicators -->
     <div class="flex flex-col sm:flex-row sm:justify-end mb-4">
         <div class="flex flex-col sm:flex-row gap-2 sm:gap-2 w-full sm:w-auto">
-            <span class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto" 
-                  :class="pifAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
+            <span
+                class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto"
+                :class="pifAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
                 PIF Updates: <span x-text="pifAutoUpdateEnabled ? 'Automatic' : 'Manual'" class="ml-1"></span>
             </span>
-            
-            <span class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto" 
-                  :class="pogoAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
+
+            <span
+                class="inline-flex items-center justify-between px-3 py-1 rounded-md text-sm font-medium w-full sm:w-auto"
+                :class="pogoAutoUpdateEnabled ? 'bg-green-900/30 text-green-400 border border-green-700' : 'bg-red-900/30 text-red-400 border border-red-700'">
                 PoGO Updates: <span x-text="pogoAutoUpdateEnabled ? 'Automatic' : 'Manual'" class="ml-1"></span>
             </span>
         </div>
@@ -61,12 +68,16 @@
                 <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                         <div class="text-base font-semibold text-gray-100 truncate" x-text="device.display_name"></div>
-                        <div class="text-xs text-gray-400 mt-1" x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')"></div>
+                        <div class="text-xs text-gray-400 mt-1"
+                            x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')">
+                        </div>
                     </div>
 
                     <div class="flex items-center gap-2 flex-none">
-                        <span class="text-sm" x-text="device.status ? '✅' : '❌'" :class="device.status ? 'text-green-500' : 'text-red-500'"></span>
-                        <span class="text-sm" x-text="device.is_alive ? '✅' : '❌'" :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
+                        <span class="text-sm" x-text="device.status ? '✅' : '❌'"
+                            :class="device.status ? 'text-green-500' : 'text-red-500'"></span>
+                        <span class="text-sm" x-text="device.is_alive ? '✅' : '❌'"
+                            :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
                     </div>
                 </div>
 
@@ -110,48 +121,74 @@
 
                 <div class="mt-3 grid grid-cols-2 gap-2">
                     <div class="dropdown relative" x-data="{ open: false }">
-                        <button @click="open = !open" class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center" type="button">
+                        <button @click="open = !open"
+                            class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center"
+                            type="button">
                             PoGo
-                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
-                        <div x-show="open" @click.away="open = false" class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
+                        <div x-show="open" @click.away="open = false"
+                            class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-1 divide-y divide-gray-700">
-                                <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoLatest"></button>
-                                <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoPrevious"></button>
+                                <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
+                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
+                                    x-text="pogoLatest"></button>
+                                <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
+                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
+                                    x-text="pogoPrevious"></button>
                             </div>
                         </div>
                     </div>
 
-                    <div class="dropdown relative" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
-                        <button @click="open = !open" class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center" type="button">
+                    <div class="dropdown relative"
+                        x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
+                        <button @click="open = !open"
+                            class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center"
+                            type="button">
                             Module
-                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
-                        <div x-show="open" @click.away="open = false" class="origin-top-left absolute left-0 mt-2 w-72 max-w-[92vw] rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
+                        <div x-show="open" @click.away="open = false"
+                            class="origin-top-left absolute left-0 mt-2 w-72 max-w-[92vw] rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-2 px-2">
                                 <div class="flex border-b border-gray-700 mb-2 pb-2">
-                                    <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All</button>
-                                    <button @click="moduleType = 'fork'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
-                                    <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1" :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
+                                    <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
+                                        :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All</button>
+                                    <button @click="moduleType = 'fork'"
+                                        class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
+                                        :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
+                                    <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1"
+                                        :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
                                 </div>
 
                                 <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
-                                    <template x-for="version in filteredVersions()" :key="`${version.module_type}-${version.version}`">
-                                        <button type="button" @click="updateDeviceModule(device.ip, version.version, version.module_type)" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
+                                    <template x-for="version in filteredVersions()"
+                                        :key="`${version.module_type}-${version.version}`">
+                                        <button type="button"
+                                            @click="updateDeviceModule(device.ip, version.version, version.module_type)"
+                                            class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
                                             <div class="flex justify-between items-center">
                                                 <div>
                                                     <span class="text-white font-medium" x-text="version.name"></span>
-                                                    <span class="text-xs text-gray-500 ml-1" x-text="formatDate(version.published_at)"></span>
+                                                    <span class="text-xs text-gray-500 ml-1"
+                                                        x-text="formatDate(version.published_at)"></span>
                                                 </div>
-                                                <span class="px-1.5 py-0.5 text-xs rounded" :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'" x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                                <span class="px-1.5 py-0.5 text-xs rounded"
+                                                    :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'"
+                                                    x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
                                             </div>
                                         </button>
                                     </template>
-                                    <div x-show="filteredVersions().length === 0" class="px-4 py-2 text-sm text-gray-500 text-center">
+                                    <div x-show="filteredVersions().length === 0"
+                                        class="px-4 py-2 text-sm text-gray-500 text-center">
                                         <span x-show="versions.length === 0">Loading versions...</span>
                                         <span x-show="versions.length > 0">No versions found</span>
                                     </div>
@@ -160,8 +197,10 @@
                         </div>
                     </div>
 
-                    <button type="button" @click="restartDevice(device.ip)" class="w-full px-3 py-2 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">Restart</button>
-                    <button type="button" @click="rebootDevice(device.ip)" class="w-full px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-500 border border-red-700 rounded-md text-xs">Reboot</button>
+                    <button type="button" @click="restartDevice(device.ip)"
+                        class="w-full px-3 py-2 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">Restart</button>
+                    <button type="button" @click="rebootDevice(device.ip)"
+                        class="w-full px-3 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-500 border border-red-700 rounded-md text-xs">Reboot</button>
                 </div>
             </div>
         </template>
@@ -173,95 +212,151 @@
             <table class="min-w-full divide-y divide-gray-700">
                 <thead class="bg-dark-800">
                     <tr>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('name')">
+                        <th scope="col"
+                            class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('name')">
                             Name
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'name' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'name'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'name' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'name'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden md:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('ip')">
+                        <th scope="col"
+                            class="hidden md:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('ip')">
                             IP / ID
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'ip' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'ip'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'ip' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'ip'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('adb')">
+                        <th scope="col"
+                            class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('adb')">
                             ADB
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'adb' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'adb'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'adb' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'adb'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('alive')">
+                        <th scope="col"
+                            class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('alive')">
                             Alive
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'alive' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'alive'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'alive' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'alive'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('runtime')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('runtime')">
                             Runtime
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'runtime' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'runtime'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'runtime' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'runtime'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('control')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('control')">
                             Control
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'control' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'control'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'control' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'control'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('pogo')">
+                        <th scope="col"
+                            class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('pogo')">
                             PoGo
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'pogo' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'pogo'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'pogo' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'pogo'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('mitm')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('mitm')">
                             MITM
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'mitm' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'mitm'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'mitm' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'mitm'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('module')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('module')">
                             PIF
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'module' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'module'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'module' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'module'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('memory')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('memory')">
                             Memory
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'memory' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'memory'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'memory' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'memory'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top" @click="sortTable('token')">
+                        <th scope="col"
+                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
+                            @click="sortTable('token')">
                             Token
-                            <span class="inline-block ml-1" :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'token' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="sortConfig.key === 'token'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+                            <span class="inline-block ml-1"
+                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'token' }">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" x-show="sortConfig.key === 'token'">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M5 15l7-7 7 7" />
                                 </svg>
                             </span>
                         </th>
-                        <th scope="col" class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider align-top">
+                        <th scope="col"
+                            class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider align-top">
                             Actions
                         </th>
                     </tr>
@@ -271,9 +366,12 @@
                         <tr class="hover:bg-gray-800/70 transition-colors">
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100">
                                 <div x-text="device.display_name"></div>
-                                <div class="md:hidden text-xs text-gray-400 mt-1" x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')"></div>
+                                <div class="md:hidden text-xs text-gray-400 mt-1"
+                                    x-text="(device.ip && device.ip.includes(':')) ? device.ip.split(':')[0] : (device.ip || '')">
+                                </div>
                             </td>
-                            <td class="hidden md:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.ip.includes(':') ? device.ip.split(':')[0] : device.ip"></td>
+                            <td class="hidden md:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
+                                x-text="device.ip.includes(':') ? device.ip.split(':')[0] : device.ip"></td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <template x-if="device.status">
@@ -283,105 +381,150 @@
                                         <div>
                                             <span class="text-red-500 relative">❌</span>
                                             <template x-if="device.adb_error">
-                                                <span class="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-xs text-white">!</span>
+                                                <span
+                                                    class="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-xs text-white">!</span>
                                             </template>
                                         </div>
                                     </template>
                                     <template x-if="device.adb_error">
-                                        <div class="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded py-1 px-2 -mt-16 ml-4 w-56">
+                                        <div
+                                            class="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded py-1 px-2 -mt-16 ml-4 w-56">
                                             <span x-text="device.adb_error"></span>
                                         </div>
                                     </template>
                                 </div>
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                <span x-text="device.is_alive ? '✅' : '❌'" :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
+                                <span x-text="device.is_alive ? '✅' : '❌'"
+                                    :class="device.is_alive ? 'text-green-500' : 'text-red-500'"></span>
                             </td>
                             <!-- New Runtime column -->
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <div class="relative group">
                                     <span x-text="formatRuntime(device.runtime)"></span>
                                     <template x-if="device.last_runtime && device.last_runtime > 60">
-                                        <div class="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded py-1 px-2 -mt-8 ml-4">
+                                        <div
+                                            class="absolute z-10 invisible group-hover:visible bg-gray-900 text-white text-xs rounded py-1 px-2 -mt-8 ml-4">
                                             Last: <span x-text="formatRuntime(device.last_runtime)"></span>
                                         </div>
                                     </template>
                                 </div>
                             </td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                <span class="px-2 py-1 text-xs rounded-full" :class="device.control_enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'" x-text="device.control_enabled ? 'Active' : 'Inactive'"></span>
+                                <span class="px-2 py-1 text-xs rounded-full"
+                                    :class="device.control_enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'"
+                                    x-text="device.control_enabled ? 'Active' : 'Inactive'"></span>
                             </td>
-                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo"></td>
-                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.mitm"></td>
-                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.module"></td>
-                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="formatMemory(device.mem_free)"></td>
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo">
+                            </td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
+                                x-text="device.mitm"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
+                                x-text="device.module"></td>
+                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
+                                x-text="formatMemory(device.mem_free)"></td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <template x-if="device === sortedDevices[0]">
                                     <template x-if="'{{ config.device_token }}'.trim()">
                                         {% if token_valid %}
-                                        <span class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                                        <span
+                                            class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
                                         {% else %}
-                                        <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                        <span
+                                            class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
                                         {% endif %}
                                     </template>
                                     <template x-if="!'{{ config.device_token }}'.trim()">
-                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
+                                            Set</span>
                                     </template>
                                 </template>
                                 <template x-if="device !== sortedDevices[0]">
                                     <template x-if="'{{ config.device_token }}'.trim()">
-                                        <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                                        <span
+                                            class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
                                     </template>
                                     <template x-if="!'{{ config.device_token }}'.trim()">
-                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                                        <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not
+                                            Set</span>
                                     </template>
                                 </template>
                             </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
                                 <div class="dropdown" x-data="{ open: false }">
-                                    <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">
+                                    <button @click="open = !open"
+                                        class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center"
+                                        type="button">
                                         PoGo
-                                        <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                            xmlns="http://www.w3.org/2000/svg">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M19 9l-7 7-7-7"></path>
                                         </svg>
                                     </button>
-                                    <div x-show="open" @click.away="open = false" class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
+                                    <div x-show="open" @click.away="open = false"
+                                        class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-1 divide-y divide-gray-700">
-                                            <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoLatest"></button>
-                                            <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left" x-text="pogoPrevious"></button>
+                                            <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
+                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
+                                                x-text="pogoLatest"></button>
+                                            <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
+                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
+                                                x-text="pogoPrevious"></button>
                                         </div>
                                     </div>
                                 </div>
 
                                 <!-- Module Dropdown -->
-                                <div class="dropdown" x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
-                                    <button @click="open = !open" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center" type="button">
+                                <div class="dropdown"
+                                    x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
+                                    <button @click="open = !open"
+                                        class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center"
+                                        type="button">
                                         Module
-                                        <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                            xmlns="http://www.w3.org/2000/svg">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M19 9l-7 7-7-7"></path>
                                         </svg>
                                     </button>
-                                    <div x-show="open" @click.away="open = false" class="origin-top-right absolute mt-2 w-72 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
+                                    <div x-show="open" @click.away="open = false"
+                                        class="origin-top-right absolute mt-2 w-72 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-2 px-2">
                                             <div class="flex border-b border-gray-700 mb-2 pb-2">
-                                                <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All Modules</button>
-                                                <button @click="moduleType = 'fork'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1" :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
-                                                <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1" :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
+                                                <button @click="moduleType = 'all'"
+                                                    class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
+                                                    :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All
+                                                    Modules</button>
+                                                <button @click="moduleType = 'fork'"
+                                                    class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
+                                                    :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
+                                                <button @click="moduleType = 'fix'"
+                                                    class="px-3 py-1 text-xs rounded-md flex-1"
+                                                    :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
                                             </div>
 
                                             <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
-                                                <template x-for="version in filteredVersions()" :key="`${version.module_type}-${version.version}`">
-                                                    <button type="button" @click="updateDeviceModule(device.ip, version.version, version.module_type)" class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
+                                                <template x-for="version in filteredVersions()"
+                                                    :key="`${version.module_type}-${version.version}`">
+                                                    <button type="button"
+                                                        @click="updateDeviceModule(device.ip, version.version, version.module_type)"
+                                                        class="block w-full text-left px-4 py-2 text-sm hover:bg-gray-800 transition-colors">
                                                         <div class="flex justify-between items-center">
                                                             <div>
-                                                                <span class="text-white font-medium" x-text="version.name"></span>
-                                                                <span class="text-xs text-gray-500 ml-1" x-text="formatDate(version.published_at)"></span>
+                                                                <span class="text-white font-medium"
+                                                                    x-text="version.name"></span>
+                                                                <span class="text-xs text-gray-500 ml-1"
+                                                                    x-text="formatDate(version.published_at)"></span>
                                                             </div>
-                                                            <span class="px-1.5 py-0.5 text-xs rounded" :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'" x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                                            <span class="px-1.5 py-0.5 text-xs rounded"
+                                                                :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'"
+                                                                x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
                                                         </div>
                                                     </button>
                                                 </template>
-                                                <div x-show="filteredVersions().length === 0" class="px-4 py-2 text-sm text-gray-500 text-center">
+                                                <div x-show="filteredVersions().length === 0"
+                                                    class="px-4 py-2 text-sm text-gray-500 text-center">
                                                     <span x-show="versions.length === 0">Loading versions...</span>
                                                     <span x-show="versions.length > 0">No versions found</span>
                                                 </div>
@@ -389,11 +532,13 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" @click="restartDevice(device.ip)" class="px-3 py-1 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">
+                                <button type="button" @click="restartDevice(device.ip)"
+                                    class="px-3 py-1 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-500 border border-yellow-700 rounded-md text-xs">
                                     Restart
                                 </button>
-                                
-                                <button type="button" @click="rebootDevice(device.ip)" class="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-500 border border-red-700 rounded-md text-xs">
+
+                                <button type="button" @click="rebootDevice(device.ip)"
+                                    class="px-3 py-1 bg-red-900/30 hover:bg-red-900/50 text-red-500 border border-red-700 rounded-md text-xs">
                                     Reboot
                                 </button>
                             </td>
@@ -403,21 +548,25 @@
             </table>
         </div>
     </div>
-    
+
     <!-- Update progress modal -->
-    <div id="updateModal" x-show="showUpdateModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" x-cloak>
-        <div class="bg-dark-800 rounded-lg shadow-xl w-[92vw] sm:max-w-md sm:w-full p-6" @click.away="showUpdateModal = false">
+    <div id="updateModal" x-show="showUpdateModal"
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" x-cloak>
+        <div class="bg-dark-800 rounded-lg shadow-xl w-[92vw] sm:max-w-md sm:w-full p-6"
+            @click.away="showUpdateModal = false">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-xl font-medium text-gray-100">Update in progress...</h3>
                 <button @click="showUpdateModal = false" class="text-gray-400 hover:text-gray-200">
                     <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
             </div>
             <div class="mb-4">
                 <div class="overflow-hidden h-2 text-xs flex rounded bg-gray-700">
-                    <div class="w-0 flex-none h-full flex justify-center bg-blue-500 transition-all duration-300 ease-out" :style="{ width: updateProgress + '%' }"></div>
+                    <div class="w-0 flex-none h-full flex justify-center bg-blue-500 transition-all duration-300 ease-out"
+                        :style="{ width: updateProgress + '%' }"></div>
                 </div>
             </div>
             <p class="text-center text-gray-300">Please wait, this may take a few minutes...</p>
@@ -426,540 +575,540 @@
 </div>
 
 <script>
-// Alpine.js component for status page
-function statusPage() {
-    return {
-        devices: [],
-        sortedDevices: [],
-        versions: [],
-        moduleType: 'all',
-        pogoLatest: "N/A",
-        pogoPrevious: "N/A",
-        pogoAutoUpdateEnabled: false,
-        pifAutoUpdateEnabled: false,
-        lastUpdated: new Date().toLocaleTimeString(),
-        isRefreshing: false,
-        showUpdateModal: false,
-        updateProgress: 0,
-        
-        sortConfig: {
-            key: 'name',
-            direction: 'asc'
-        },
-        connection: {
-            status: 'connecting',
-            statusText: 'Connecting...'
-        },
-        socket: null,
-        initialized: false,
-        
-        init() {
-            // Prevent duplicate initialization
-            if (this.initialized) {
-                return;
-            }
-            this.initialized = true;
-            
-            try {
-                const el = this.$el;
-                if (el && el.dataset) {
-                    this.pogoLatest = el.dataset.pogoLatest || this.pogoLatest;
-                    this.pogoPrevious = el.dataset.pogoPrevious || this.pogoPrevious;
-                    this.pogoAutoUpdateEnabled = el.dataset.pogoAutoUpdateEnabled === 'true';
-                    this.pifAutoUpdateEnabled = el.dataset.pifAutoUpdateEnabled === 'true';
-                }
-            } catch (e) {
-                console.error('Error initializing status page data:', e);
-            }
+    // Alpine.js component for status page
+    function statusPage() {
+        return {
+            devices: [],
+            sortedDevices: [],
+            versions: [],
+            moduleType: 'all',
+            pogoLatest: "N/A",
+            pogoPrevious: "N/A",
+            pogoAutoUpdateEnabled: false,
+            pifAutoUpdateEnabled: false,
+            lastUpdated: new Date().toLocaleTimeString(),
+            isRefreshing: false,
+            showUpdateModal: false,
+            updateProgress: 0,
 
-            this.initWebsocket();
-        },
-        
-        // Initialize websocket connection
-        initWebsocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/status`;
-            
-            console.log('Initializing WebSocket connection to:', wsUrl);
+            sortConfig: {
+                key: 'name',
+                direction: 'asc'
+            },
+            connection: {
+                status: 'connecting',
+                statusText: 'Connecting...'
+            },
+            socket: null,
+            initialized: false,
 
-            // Avoid overlapping sockets (reconnect + timers). If we're already
-            // connected/connecting, don't create a new one.
-            try {
-                if (this.socket) {
-                    if (this.socket.readyState === WebSocket.OPEN) {
-                        return;
-                    }
-                    if (this.socket.readyState === WebSocket.CONNECTING) {
-                        return;
-                    }
-                }
-            } catch (e) {
-                // ignore
-            }
-
-            this.connection.status = 'connecting';
-            this.connection.statusText = 'Connecting...';
-            
-            // Create a raw WebSocket connection (not using HTMX WebSocket extension)
-            this.socket = new WebSocket(wsUrl);
-
-            const socket = this.socket;
-            
-            socket.onopen = () => {
-                console.log('WebSocket connection established');
-                this.connection.status = 'connected';
-                this.connection.statusText = 'Connected';
-                
-                // Initial request for data
-                if (this.socket === socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send('refresh');
-                }
-            };
-            
-            socket.onmessage = (event) => {
-                try {
-                    console.log('WebSocket message received');
-                    const data = JSON.parse(event.data);
-                    this.updateData(data);
-                } catch (e) {
-                    console.error('Error parsing WebSocket message:', e);
-                }
-            };
-            
-            socket.onclose = () => {
-                if (this.socket !== socket) {
+            init() {
+                // Prevent duplicate initialization
+                if (this.initialized) {
                     return;
                 }
-                console.log('WebSocket connection closed');
-                this.connection.status = 'disconnected';
-                this.connection.statusText = 'Disconnected';
-                
-                // Set up AJAX polling as fallback
-                this.startAjaxPolling();
-                
-                // Try to reconnect after a delay
+                this.initialized = true;
+
+                try {
+                    const el = this.$el;
+                    if (el && el.dataset) {
+                        this.pogoLatest = el.dataset.pogoLatest || this.pogoLatest;
+                        this.pogoPrevious = el.dataset.pogoPrevious || this.pogoPrevious;
+                        this.pogoAutoUpdateEnabled = el.dataset.pogoAutoUpdateEnabled === 'true';
+                        this.pifAutoUpdateEnabled = el.dataset.pifAutoUpdateEnabled === 'true';
+                    }
+                } catch (e) {
+                    console.error('Error initializing status page data:', e);
+                }
+
+                this.initWebsocket();
+            },
+
+            // Initialize websocket connection
+            initWebsocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/status`;
+
+                console.log('Initializing WebSocket connection to:', wsUrl);
+
+                // Avoid overlapping sockets (reconnect + timers). If we're already
+                // connected/connecting, don't create a new one.
+                try {
+                    if (this.socket) {
+                        if (this.socket.readyState === WebSocket.OPEN) {
+                            return;
+                        }
+                        if (this.socket.readyState === WebSocket.CONNECTING) {
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+
+                this.connection.status = 'connecting';
+                this.connection.statusText = 'Connecting...';
+
+                // Create a raw WebSocket connection (not using HTMX WebSocket extension)
+                this.socket = new WebSocket(wsUrl);
+
+                const socket = this.socket;
+
+                socket.onopen = () => {
+                    console.log('WebSocket connection established');
+                    this.connection.status = 'connected';
+                    this.connection.statusText = 'Connected';
+
+                    // Initial request for data
+                    if (this.socket === socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send('refresh');
+                    }
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        console.log('WebSocket message received');
+                        const data = JSON.parse(event.data);
+                        this.updateData(data);
+                    } catch (e) {
+                        console.error('Error parsing WebSocket message:', e);
+                    }
+                };
+
+                socket.onclose = () => {
+                    if (this.socket !== socket) {
+                        return;
+                    }
+                    console.log('WebSocket connection closed');
+                    this.connection.status = 'disconnected';
+                    this.connection.statusText = 'Disconnected';
+
+                    // Set up AJAX polling as fallback
+                    this.startAjaxPolling();
+
+                    // Try to reconnect after a delay
+                    setTimeout(() => {
+                        if (this.connection.status === 'disconnected') {
+                            console.log('Attempting to reconnect WebSocket...');
+                            this.initWebsocket();
+                        }
+                    }, 5000);
+                };
+
+                socket.onerror = (error) => {
+                    if (this.socket !== socket) {
+                        return;
+                    }
+                    console.error('WebSocket error:', error);
+                    this.connection.status = 'disconnected';
+                    this.connection.statusText = 'Error';
+
+                    // Switch to AJAX polling on error
+                    this.startAjaxPolling();
+                };
+
+                // Add a timeout to switch to AJAX if WebSocket doesn't connect
                 setTimeout(() => {
-                    if (this.connection.status === 'disconnected') {
-                        console.log('Attempting to reconnect WebSocket...');
-                        this.initWebsocket();
+                    if (this.connection.status === 'connecting') {
+                        console.log('WebSocket connection timed out, switching to AJAX polling');
+                        this.connection.statusText = 'Using AJAX';
+                        this.startAjaxPolling();
                     }
                 }, 5000);
-            };
-            
-            socket.onerror = (error) => {
-                if (this.socket !== socket) {
-                    return;
-                }
-                console.error('WebSocket error:', error);
-                this.connection.status = 'disconnected';
-                this.connection.statusText = 'Error';
-                
-                // Switch to AJAX polling on error
-                this.startAjaxPolling();
-            };
-            
-            // Add a timeout to switch to AJAX if WebSocket doesn't connect
-            setTimeout(() => {
-                if (this.connection.status === 'connecting') {
-                    console.log('WebSocket connection timed out, switching to AJAX polling');
-                    this.connection.statusText = 'Using AJAX';
-                    this.startAjaxPolling();
-                }
-            }, 5000);
-        },
-        
-        // AJAX polling as fallback
-        startAjaxPolling() {
-            if (this.connection.status !== 'connected') {
-                // Initial fetch
-                this.refreshData();
-                
-                // Set polling interval
-                const pollInterval = setInterval(() => {
-                    // Only continue polling if still disconnected
-                    if (this.connection.status !== 'connected') {
-                        this.refreshData();
-                    } else {
-                        // If we've reconnected, stop polling
-                        clearInterval(pollInterval);
-                    }
-                }, 30000); // Every 30 seconds
-            }
-        },
-        
-        // Refresh data using AJAX
-        refreshData() {
-            this.isRefreshing = true;
-            const startTime = Date.now();
-            
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(data => {
-                    this.updateData(data);
-                    
-                    // Ensure minimum animation time of 500ms
-                    const elapsed = Date.now() - startTime;
-                    if (elapsed < 500) {
-                        setTimeout(() => {
-                            this.isRefreshing = false;
-                        }, 500 - elapsed);
-                    } else {
-                        this.isRefreshing = false;
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching data:', error);
-                    this.isRefreshing = false;
-                });
-        },
-        
-        // Update data state
-        updateData(data) {
-            this.devices = data.devices || [];
-            this.sortedDevices = [...this.devices];
-            this.pogoLatest = data.pogo_latest || "N/A";
-            this.pogoPrevious = data.pogo_previous || "N/A";
-            this.pogoAutoUpdateEnabled = data.pogo_auto_update_enabled;
-            this.pifAutoUpdateEnabled = data.pif_auto_update_enabled;
-            this.lastUpdated = new Date().toLocaleTimeString();
-            
-            // Update sort
-            this.sortTable(this.sortConfig.key, false);
-            
-            // Update progress modal if update in progress
-            if (data.update_in_progress) {
-                this.showUpdateModal = true;
-                this.updateProgress = data.update_progress;
-            } else {
-                // Hide modal when update is complete (regardless of progress value)
-                setTimeout(() => {
-                    this.showUpdateModal = false;
-                }, 1000);
-            }
-        },
-        
-        // Format memory value
-        formatMemory(memKB) {
-            if (!memKB || memKB <= 0) {
-                return "N/A";
-            }
-            
-            // Memory comes in KB
-            if (memKB < 1024) {
-                return `${(memKB).toFixed(1).replace('.', ',')} kB`;
-            }
-            
-            // Convert to MB
-            const memMB = memKB / 1024;
-            if (memMB < 1024) {
-                return `${memMB.toFixed(2).replace('.', ',')} MB`;
-            }
-            
-            // Convert to GB
-            const memGB = memMB / 1024;
-            return `${memGB.toFixed(2).replace('.', ',')} GB`;
-        },
-        
-        // Format runtime value
-        formatRuntime(seconds) {
-            if (!seconds || seconds <= 0) {
-                return "N/A";
-            }
-            
-            const hours = Math.floor(seconds / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            
-            return `${hours}h ${minutes}m`;
-        },
-        
-        // Format date for PIF versions
-        formatDate(dateString) {
-            try {
-                const date = new Date(dateString);
-                return date.toLocaleDateString();
-            } catch (error) {
-                return dateString;
-            }
-        },
-        
-        // Sort table by column
-        sortTable(key, toggleDirection = true) {
-            // If clicking the same header, toggle direction
-            if (toggleDirection && this.sortConfig.key === key) {
-                this.sortConfig.direction = this.sortConfig.direction === 'asc' ? 'desc' : 'asc';
-            } else {
-                this.sortConfig.key = key;
-                // Only change direction if we're toggling
-                if (toggleDirection) {
-                    this.sortConfig.direction = 'asc';
-                }
-            }
-            
-            const multiplier = this.sortConfig.direction === 'asc' ? 1 : -1;
-            
-            this.sortedDevices = [...this.devices].sort((a, b) => {
-                let aValue, bValue;
-                
-                // Handle different column types
-                switch (key) {
-                    case 'name':
-                        aValue = a.display_name;
-                        bValue = b.display_name;
-                        return multiplier * aValue.localeCompare(bValue);
-                        
-                    case 'ip':
-                        aValue = a.ip;
-                        bValue = b.ip;
-                        return multiplier * aValue.localeCompare(bValue);
-                        
-                    case 'adb':
-                    case 'alive':
-                        // Boolean values - true should come first in ascending
-                        aValue = key === 'adb' ? a.status : a.is_alive;
-                        bValue = key === 'adb' ? b.status : b.is_alive;
-                        return multiplier * (bValue === aValue ? 0 : aValue ? -1 : 1);
-                        
-                    case 'control':
-                        aValue = a.control_enabled;
-                        bValue = b.control_enabled;
-                        return multiplier * (bValue === aValue ? 0 : aValue ? -1 : 1);
-                        
-                    case 'runtime':
-                        // Runtime is in seconds
-                        aValue = a.runtime || 0;
-                        bValue = b.runtime || 0;
-                        return multiplier * (aValue - bValue);
-                        
-                    case 'pogo':
-                    case 'mitm':
-                    case 'module':
-                        aValue = a[key];
-                        bValue = b[key];
-                        
-                        // Handle N/A values
-                        if (aValue === 'N/A' && bValue === 'N/A') return 0;
-                        if (aValue === 'N/A') return multiplier;
-                        if (bValue === 'N/A') return -multiplier;
-                        
-                        // Compare version numbers
-                        return multiplier * this.compareVersions(aValue, bValue);
-                        
-                    case 'memory':
-                        aValue = a.mem_free || 0;
-                        bValue = b.mem_free || 0;
-                        return multiplier * (aValue - bValue);
-                        
-                    default:
-                        return 0;
-                }
-            });
-        },
-        
-        // Compare version strings
-        compareVersions(a, b) {
-            const aParts = a.split('.').map(p => parseInt(p) || 0);
-            const bParts = b.split('.').map(p => parseInt(p) || 0);
-            
-            for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-                const aPart = aParts[i] || 0;
-                const bPart = bParts[i] || 0;
-                
-                if (aPart !== bPart) {
-                    return aPart - bPart;
-                }
-            }
-            
-            return 0;
-        },
-        
-        // Fetch all module versions (both Fork and Fix)
-        fetchAllModuleVersions() {
-            fetch('/api/all-module-versions')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.all) {
-                        this.versions = data.all;
-                        // Set preferred module type as default filter
-                        this.moduleType = data.preferred || 'all';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching module versions:', error);
-                });
-        },
+            },
 
-        // Filter versions based on selected module type
-        filteredVersions() {
-            if (!this.versions) return [];
-            if (this.moduleType === 'all') return this.versions.slice(0, 10); // Limit to top 10
-            return this.versions
-                .filter(v => v.module_type === this.moduleType)
-                .slice(0, 10); // Limit to top 10
-        },
-        
-        // Legacy method - kept for compatibility
-        fetchPifVersions() {
-            fetch('/api/pif-versions')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.versions) {
-                        this.versions = data.versions;
+            // AJAX polling as fallback
+            startAjaxPolling() {
+                if (this.connection.status !== 'connected') {
+                    // Initial fetch
+                    this.refreshData();
+
+                    // Set polling interval
+                    const pollInterval = setInterval(() => {
+                        // Only continue polling if still disconnected
+                        if (this.connection.status !== 'connected') {
+                            this.refreshData();
+                        } else {
+                            // If we've reconnected, stop polling
+                            clearInterval(pollInterval);
+                        }
+                    }, 30000); // Every 30 seconds
+                }
+            },
+
+            // Refresh data using AJAX
+            refreshData() {
+                this.isRefreshing = true;
+                const startTime = Date.now();
+
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        this.updateData(data);
+
+                        // Ensure minimum animation time of 500ms
+                        const elapsed = Date.now() - startTime;
+                        if (elapsed < 500) {
+                            setTimeout(() => {
+                                this.isRefreshing = false;
+                            }, 500 - elapsed);
+                        } else {
+                            this.isRefreshing = false;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching data:', error);
+                        this.isRefreshing = false;
+                    });
+            },
+
+            // Update data state
+            updateData(data) {
+                this.devices = data.devices || [];
+                this.sortedDevices = [...this.devices];
+                this.pogoLatest = data.pogo_latest || "N/A";
+                this.pogoPrevious = data.pogo_previous || "N/A";
+                this.pogoAutoUpdateEnabled = data.pogo_auto_update_enabled;
+                this.pifAutoUpdateEnabled = data.pif_auto_update_enabled;
+                this.lastUpdated = new Date().toLocaleTimeString();
+
+                // Update sort
+                this.sortTable(this.sortConfig.key, false);
+
+                // Update progress modal if update in progress
+                if (data.update_in_progress) {
+                    this.showUpdateModal = true;
+                    this.updateProgress = data.update_progress;
+                } else {
+                    // Hide modal when update is complete (regardless of progress value)
+                    setTimeout(() => {
+                        this.showUpdateModal = false;
+                    }, 1000);
+                }
+            },
+
+            // Format memory value
+            formatMemory(memKB) {
+                if (!memKB || memKB <= 0) {
+                    return "N/A";
+                }
+
+                // Memory comes in KB
+                if (memKB < 1024) {
+                    return `${(memKB).toFixed(1).replace('.', ',')} kB`;
+                }
+
+                // Convert to MB
+                const memMB = memKB / 1024;
+                if (memMB < 1024) {
+                    return `${memMB.toFixed(2).replace('.', ',')} MB`;
+                }
+
+                // Convert to GB
+                const memGB = memMB / 1024;
+                return `${memGB.toFixed(2).replace('.', ',')} GB`;
+            },
+
+            // Format runtime value
+            formatRuntime(seconds) {
+                if (!seconds || seconds <= 0) {
+                    return "N/A";
+                }
+
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+
+                return `${hours}h ${minutes}m`;
+            },
+
+            // Format date for PIF versions
+            formatDate(dateString) {
+                try {
+                    const date = new Date(dateString);
+                    return date.toLocaleDateString();
+                } catch (error) {
+                    return dateString;
+                }
+            },
+
+            // Sort table by column
+            sortTable(key, toggleDirection = true) {
+                // If clicking the same header, toggle direction
+                if (toggleDirection && this.sortConfig.key === key) {
+                    this.sortConfig.direction = this.sortConfig.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this.sortConfig.key = key;
+                    // Only change direction if we're toggling
+                    if (toggleDirection) {
+                        this.sortConfig.direction = 'asc';
+                    }
+                }
+
+                const multiplier = this.sortConfig.direction === 'asc' ? 1 : -1;
+
+                this.sortedDevices = [...this.devices].sort((a, b) => {
+                    let aValue, bValue;
+
+                    // Handle different column types
+                    switch (key) {
+                        case 'name':
+                            aValue = a.display_name;
+                            bValue = b.display_name;
+                            return multiplier * aValue.localeCompare(bValue);
+
+                        case 'ip':
+                            aValue = a.ip;
+                            bValue = b.ip;
+                            return multiplier * aValue.localeCompare(bValue);
+
+                        case 'adb':
+                        case 'alive':
+                            // Boolean values - true should come first in ascending
+                            aValue = key === 'adb' ? a.status : a.is_alive;
+                            bValue = key === 'adb' ? b.status : b.is_alive;
+                            return multiplier * (bValue === aValue ? 0 : aValue ? -1 : 1);
+
+                        case 'control':
+                            aValue = a.control_enabled;
+                            bValue = b.control_enabled;
+                            return multiplier * (bValue === aValue ? 0 : aValue ? -1 : 1);
+
+                        case 'runtime':
+                            // Runtime is in seconds
+                            aValue = a.runtime || 0;
+                            bValue = b.runtime || 0;
+                            return multiplier * (aValue - bValue);
+
+                        case 'pogo':
+                        case 'mitm':
+                        case 'module':
+                            aValue = a[key];
+                            bValue = b[key];
+
+                            // Handle N/A values
+                            if (aValue === 'N/A' && bValue === 'N/A') return 0;
+                            if (aValue === 'N/A') return multiplier;
+                            if (bValue === 'N/A') return -multiplier;
+
+                            // Compare version numbers
+                            return multiplier * this.compareVersions(aValue, bValue);
+
+                        case 'memory':
+                            aValue = a.mem_free || 0;
+                            bValue = b.mem_free || 0;
+                            return multiplier * (aValue - bValue);
+
+                        default:
+                            return 0;
+                    }
+                });
+            },
+
+            // Compare version strings
+            compareVersions(a, b) {
+                const aParts = a.split('.').map(p => parseInt(p) || 0);
+                const bParts = b.split('.').map(p => parseInt(p) || 0);
+
+                for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+                    const aPart = aParts[i] || 0;
+                    const bPart = bParts[i] || 0;
+
+                    if (aPart !== bPart) {
+                        return aPart - bPart;
+                    }
+                }
+
+                return 0;
+            },
+
+            // Fetch all module versions (both Fork and Fix)
+            fetchAllModuleVersions() {
+                fetch('/api/all-module-versions')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.all) {
+                            this.versions = data.all;
+                            // Set preferred module type as default filter
+                            this.moduleType = data.preferred || 'all';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching module versions:', error);
+                    });
+            },
+
+            // Filter versions based on selected module type
+            filteredVersions() {
+                if (!this.versions) return [];
+                if (this.moduleType === 'all') return this.versions.slice(0, 10); // Limit to top 10
+                return this.versions
+                    .filter(v => v.module_type === this.moduleType)
+                    .slice(0, 10); // Limit to top 10
+            },
+
+            // Legacy method - kept for compatibility
+            fetchPifVersions() {
+                fetch('/api/pif-versions')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.versions) {
+                            this.versions = data.versions;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching PIF versions:', error);
+                    });
+            },
+
+            // NEW ACTION METHODS
+
+            // PoGo Update All button
+            pogoUpdateAll() {
+                this.showUpdateModal = true;
+
+                const formData = new FormData();
+
+                fetch('/pogo/update', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
                     }
                 })
-                .catch(error => {
-                    console.error('Error fetching PIF versions:', error);
-                });
-        },
-        
-        // NEW ACTION METHODS
-        
-        // PoGo Update All button
-        pogoUpdateAll() {
-            this.showUpdateModal = true;
-            
-            const formData = new FormData();
-            
-            fetch('/pogo/update', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    // Don't redirect - we'll just update UI
-                    this.refreshData();
-                }
-            })
-            .catch(error => {
-                console.error('Error during PoGo update:', error);
-                alert('Failed to update PoGo on devices');
-                this.showUpdateModal = false;
-            });
-        },
-        
-        // Update PoGo on single device
-        updateDevicePogo(deviceIp, version) {
-            this.showUpdateModal = true;
-            
-            const formData = new FormData();
-            formData.append('device_ip', deviceIp);
-            formData.append('version', version);
-            
-            fetch('/pogo/device-update', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    // Don't redirect - we'll just update UI
-                    this.refreshData();
-                }
-            })
-            .catch(error => {
-                console.error('Error during PoGo device update:', error);
-                alert('Failed to update PoGo on device');
-                this.showUpdateModal = false;
-            });
-        },
-        
-        // Update Module on single device
-        updateDeviceModule(deviceIp, version, moduleType) {
-            this.showUpdateModal = true;
-            
-            const formData = new FormData();
-            formData.append('device_ip', deviceIp);
-            formData.append('version', version);
-            formData.append('module_type', moduleType);
-            
-            fetch('/pif/device-update', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    // Don't redirect - we'll just update UI
-                    this.refreshData();
-                }
-            })
-            .catch(error => {
-                console.error('Error during module update:', error);
-                alert('Failed to update module on device');
-                this.showUpdateModal = false;
-            });
-        },
-        
-        // Restart device apps
-        restartDevice(deviceIp) {
-            if (!confirm('Restart apps on this device?')) return;
-            
-            this.isRefreshing = true;
-            const formData = new FormData();
-            formData.append('device_ip', deviceIp);
-            
-            fetch('/devices/restart-apps', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    // Don't redirect - we'll just update UI
-                    this.refreshData();
-                } else {
-                    this.refreshData(); // Refresh device status after operation
-                }
-            })
-            .catch(error => {
-                console.error('Error during restart:', error);
-                alert('Failed to restart device');
-            })
-            .finally(() => {
-                this.isRefreshing = false;
-            });
-        },
-        
-        // Reboot device
-        rebootDevice(deviceIp) {
-            if (!confirm('Reboot this device? This will take some time.')) return;
-            
-            this.isRefreshing = true;
-            const formData = new FormData();
-            formData.append('device_ip', deviceIp);
-            
-            fetch('/devices/reboot', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            })
-            .then(response => {
-                if (response.redirected) {
-                    // Don't redirect - we'll just update UI
-                    this.refreshData();
-                } else {
-                    this.refreshData(); // Refresh device status after operation
-                }
-            })
-            .catch(error => {
-                console.error('Error during reboot:', error);
-                alert('Failed to reboot device');
-            })
-            .finally(() => {
-                this.isRefreshing = false;
-            });
-        }
-    };
-}
+                    .then(response => {
+                        if (response.redirected) {
+                            // Don't redirect - we'll just update UI
+                            this.refreshData();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error during PoGo update:', error);
+                        alert('Failed to update PoGo on devices');
+                        this.showUpdateModal = false;
+                    });
+            },
+
+            // Update PoGo on single device
+            updateDevicePogo(deviceIp, version) {
+                this.showUpdateModal = true;
+
+                const formData = new FormData();
+                formData.append('device_ip', deviceIp);
+                formData.append('version', version);
+
+                fetch('/pogo/device-update', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                    .then(response => {
+                        if (response.redirected) {
+                            // Don't redirect - we'll just update UI
+                            this.refreshData();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error during PoGo device update:', error);
+                        alert('Failed to update PoGo on device');
+                        this.showUpdateModal = false;
+                    });
+            },
+
+            // Update Module on single device
+            updateDeviceModule(deviceIp, version, moduleType) {
+                this.showUpdateModal = true;
+
+                const formData = new FormData();
+                formData.append('device_ip', deviceIp);
+                formData.append('version', version);
+                formData.append('module_type', moduleType);
+
+                fetch('/pif/device-update', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                    .then(response => {
+                        if (response.redirected) {
+                            // Don't redirect - we'll just update UI
+                            this.refreshData();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error during module update:', error);
+                        alert('Failed to update module on device');
+                        this.showUpdateModal = false;
+                    });
+            },
+
+            // Restart device apps
+            restartDevice(deviceIp) {
+                if (!confirm('Restart apps on this device?')) return;
+
+                this.isRefreshing = true;
+                const formData = new FormData();
+                formData.append('device_ip', deviceIp);
+
+                fetch('/devices/restart-apps', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                    .then(response => {
+                        if (response.redirected) {
+                            // Don't redirect - we'll just update UI
+                            this.refreshData();
+                        } else {
+                            this.refreshData(); // Refresh device status after operation
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error during restart:', error);
+                        alert('Failed to restart device');
+                    })
+                    .finally(() => {
+                        this.isRefreshing = false;
+                    });
+            },
+
+            // Reboot device
+            rebootDevice(deviceIp) {
+                if (!confirm('Reboot this device? This will take some time.')) return;
+
+                this.isRefreshing = true;
+                const formData = new FormData();
+                formData.append('device_ip', deviceIp);
+
+                fetch('/devices/reboot', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                    .then(response => {
+                        if (response.redirected) {
+                            // Don't redirect - we'll just update UI
+                            this.refreshData();
+                        } else {
+                            this.refreshData(); // Refresh device status after operation
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error during reboot:', error);
+                        alert('Failed to reboot device');
+                    })
+                    .finally(() => {
+                        this.isRefreshing = false;
+                    });
+            }
+        };
+    }
 </script>
 {% endblock %}

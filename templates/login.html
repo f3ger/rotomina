@@ -3,58 +3,68 @@
 {% block content %}
 <div class="flex items-center justify-center mt-8">
     <div class="w-full max-w-md">
-        <div class="bg-dark-800 shadow-lg rounded-lg px-8 pt-6 pb-8 mb-4" 
-             x-data="{ username: '', password: '', errors: {}, isSubmitting: false }">
+        <div class="bg-dark-800 shadow-lg rounded-lg px-8 pt-6 pb-8 mb-4"
+            x-data="{ username: '', password: '', errors: {}, isSubmitting: false }">
             <h2 class="text-2xl font-bold mb-6 text-center text-gray-100">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 inline mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 inline mr-2" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
                 </svg>
                 Login
             </h2>
-            
+
             {% if error %}
             <div class="bg-red-900/50 border border-red-800 text-red-100 px-4 py-3 rounded mb-4" role="alert">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline mr-1" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
                 {{ error }}
             </div>
             {% endif %}
-            
+
             <form action="/login" method="post" x-on:submit="isSubmitting = true">
                 <div class="mb-4">
                     <label class="block text-gray-300 text-sm font-bold mb-2" for="username">
                         Username
                     </label>
-                    <input class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                           id="username" type="text" name="username" placeholder="Username" required
-                           x-model="username"
-                           x-on:input="errors.username = username ? '' : 'Username is required'">
+                    <input
+                        class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        id="username" type="text" name="username" placeholder="Username" required x-model="username"
+                        x-on:input="errors.username = username ? '' : 'Username is required'">
                     <p class="text-red-500 text-xs italic mt-1" x-show="errors.username" x-text="errors.username"></p>
                 </div>
-                
+
                 <div class="mb-6">
                     <label class="block text-gray-300 text-sm font-bold mb-2" for="password">
                         Password
                     </label>
-                    <input class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                           id="password" type="password" name="password" placeholder="Password" required
-                           x-model="password"
-                           x-on:input="errors.password = password ? '' : 'Password is required'">
+                    <input
+                        class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        id="password" type="password" name="password" placeholder="Password" required x-model="password"
+                        x-on:input="errors.password = password ? '' : 'Password is required'">
                     <p class="text-red-500 text-xs italic mt-1" x-show="errors.password" x-text="errors.password"></p>
                 </div>
-                
+
                 <div class="flex items-center justify-between">
-                    <button class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-all duration-200 flex items-center"
-                            type="submit"
-                            x-bind:disabled="isSubmitting || !username || !password"
-                            x-bind:class="{ 'opacity-50 cursor-not-allowed': isSubmitting }">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" x-show="!isSubmitting">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    <button
+                        class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-all duration-200 flex items-center"
+                        type="submit" x-bind:disabled="isSubmitting || !username || !password"
+                        x-bind:class="{ 'opacity-50 cursor-not-allowed': isSubmitting }">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" x-show="!isSubmitting">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                         </svg>
-                        <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" x-show="isSubmitting">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none"
+                            viewBox="0 0 24 24" x-show="isSubmitting">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                            </circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                            </path>
                         </svg>
                         <span x-text="isSubmitting ? 'Logging in...' : 'Login'"></span>
                     </button>
