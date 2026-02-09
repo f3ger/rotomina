@@ -12,7 +12,6 @@ import traceback
 import tempfile
 import os
 import platform
-import logging
 import hashlib
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -2564,8 +2563,6 @@ class MapWorldConfig:
     cache_ttl_minutes: int = 30
     keep_previous_versions: int = 3  # Number of previous versions to keep
 
-# Logger setup
-logger = logging.getLogger(__name__)
 
 class MapWorldUpdater:
     """Optimized class for MapWorld updates with version management and better error handling"""
@@ -2586,14 +2583,14 @@ class MapWorldUpdater:
                 manifest_data = zip_file.read('AndroidManifest.xml')
             
                 if debug:
-                    logger.info(f"DEBUG: AndroidManifest.xml size: {len(manifest_data)} bytes")
+                    log(f"DEBUG: AndroidManifest.xml size: {len(manifest_data)} bytes", None, "INFO")
             
                 # Check for Android Binary XML magic bytes
                 if len(manifest_data) < 4 or manifest_data[:4] != b'\x03\x00\x08\x00':
                     raise Exception("Not a valid Android Binary XML file")
             
                 if debug:
-                    logger.info("DEBUG: Detected Android Binary XML format")
+                    log("DEBUG: Detected Android Binary XML format", None, "INFO")
             
                 # UTF-16LE decoding (proven method from debugger)
                 try:
@@ -2601,7 +2598,7 @@ class MapWorldUpdater:
                     version_matches = re.findall(r'(\d+\.\d+(?:\.\d+)?)', decoded)
                 
                     if debug:
-                        logger.info(f"DEBUG: UTF-16LE found versions: {version_matches}")
+                        log(f"DEBUG: UTF-16LE found versions: {version_matches}", None, "INFO")
                 
                     # Filter for valid versions and select the best one
                     valid_versions = [v for v in version_matches if self._is_valid_version(v)]
@@ -2613,20 +2610,20 @@ class MapWorldUpdater:
                     
                         best_version = unique_versions[0]
                         if debug:
-                            logger.info(f"DEBUG: Selected version {best_version} from UTF-16LE decoding")
+                            log(f"DEBUG: Selected version {best_version} from UTF-16LE decoding", None, "INFO")
                     
                         return best_version, "0"
                 
                 except Exception as e:
                     if debug:
-                        logger.debug(f"DEBUG: UTF-16LE decoding failed: {e}")
+                        log(f"DEBUG: UTF-16LE decoding failed: {e}", None, "DEBUG")
                     raise Exception("UTF-16LE decoding failed")
         
             # If we get here, the method failed
             raise Exception("No valid version found in AndroidManifest.xml")
         
         except Exception as e:
-            logger.error(f"Version extraction failed for {apk_path}: {e}")
+            log(f"Version extraction failed for {apk_path}: {e}", None, "ERROR")
             return "unknown", "0"
 
     def _is_valid_version(self, version: str) -> bool:
@@ -2651,7 +2648,7 @@ class MapWorldUpdater:
                 # Modern MapWorld versions should be >= 2.0
                 # 1.x versions are probably wrong
                 if major == 1 and minor <= 20:
-                    logger.debug(f"Rejecting suspicious version {version} (likely too old)")
+                    log(f"Rejecting suspicious version {version} (likely too old)", None, "DEBUG")
                     return False
                 
                 # Realistic version ranges
@@ -2688,7 +2685,7 @@ class MapWorldUpdater:
                 version_name, version_code = self.extract_apk_version(apk_path)
                 versions.append((apk_path, version_name, version_code))
             except Exception as e:
-                logger.warning(f"Could not read version from {apk_path}: {e}")
+                log(f"Could not read version from {apk_path}: {e}", None, "WARNING")
         
         # Sort by modification date (newest first)
         versions.sort(key=lambda x: x[0].stat().st_mtime, reverse=True)
@@ -2708,9 +2705,9 @@ class MapWorldUpdater:
         for apk_path, version_name, version_code in to_remove:
             try:
                 apk_path.unlink()
-                logger.info(f"Removed old version: {apk_path.name} (v{version_name})")
+                log(f"Removed old version: {apk_path.name} (v{version_name})", None, "INFO")
             except Exception as e:
-                logger.error(f"Error removing old APK {apk_path}: {e}")
+                log(f"Error removing old APK {apk_path}: {e}", None, "ERROR")
     
     def backup_current_version(self) -> Optional[Path]:
         """Creates backup of current version before downloading new one"""
@@ -2724,10 +2721,10 @@ class MapWorldUpdater:
             backup_path = current_apk.parent / backup_name
             
             shutil.copy2(current_apk, backup_path)
-            logger.info(f"Created backup: {backup_path.name}")
+            log(f"Created backup: {backup_path.name}", None, "INFO")
             return backup_path
         except Exception as e:
-            logger.error(f"Error creating backup: {e}")
+            log(f"Error creating backup: {e}", None, "ERROR")
             return None
 
     async def get_remote_metadata(self) -> Dict:
@@ -2737,7 +2734,7 @@ class MapWorldUpdater:
         
         # Return cached data if still valid
         if self._metadata_cache and now < cache_valid_until:
-            logger.debug("Using cached metadata")
+            log("Using cached metadata", None, "DEBUG")
             return self._metadata_cache
         
         for attempt in range(self.config.max_retries):
@@ -2758,24 +2755,24 @@ class MapWorldUpdater:
                         # Cache successful result
                         self._metadata_cache = metadata
                         self._cache_timestamp = now
-                        logger.info("Successfully retrieved and cached metadata")
+                        log("Successfully retrieved and cached metadata", None, "INFO")
                         return metadata
                     else:
-                        logger.warning(f"HTTP {response.status_code} when fetching metadata")
+                        log(f"HTTP {response.status_code} when fetching metadata", None, "WARNING")
                         
             except httpx.TimeoutException:
-                logger.warning(f"Timeout on attempt {attempt + 1}/{self.config.max_retries}")
+                log(f"Timeout on attempt {attempt + 1}/{self.config.max_retries}", None, "WARNING")
             except httpx.RequestError as e:
-                logger.error(f"Request error on attempt {attempt + 1}: {e}")
+                log(f"Request error on attempt {attempt + 1}: {e}", None, "ERROR")
             except Exception as e:
-                logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+                log(f"Unexpected error on attempt {attempt + 1}: {e}", None, "ERROR")
             
             if attempt < self.config.max_retries - 1:
                 wait_time = 2 ** attempt  # Exponential backoff
-                logger.info(f"Retrying in {wait_time} seconds...")
+                log(f"Retrying in {wait_time} seconds...", None, "INFO")
                 await asyncio.sleep(wait_time)
         
-        logger.error("Failed to retrieve metadata after all retries")
+        log("Failed to retrieve metadata after all retries", None, "ERROR")
         return {}
 
     def _parse_last_modified(self, last_modified_str: str) -> Optional[float]:
@@ -2796,7 +2793,7 @@ class MapWorldUpdater:
             except ValueError:
                 continue
         
-        logger.warning(f"Could not parse last-modified header: {last_modified_str}")
+        log(f"Could not parse last-modified header: {last_modified_str}", None, "WARNING")
         return None
 
     async def has_update_available(self) -> Tuple[bool, str]:
@@ -2838,7 +2835,7 @@ class MapWorldUpdater:
             return False, "No updates available"
 
         except Exception as e:
-            logger.error(f"Error checking for updates: {e}")
+            log(f"Error checking for updates: {e}", None, "ERROR")
             return False, f"Error during update check: {str(e)}"
 
     async def _get_local_file_etag(self, file_path: Path) -> str:
@@ -2850,7 +2847,7 @@ class MapWorldUpdater:
                     hasher.update(chunk)
             return hasher.hexdigest()
         except Exception as e:
-            logger.error(f"Error generating local file hash: {e}")
+            log(f"Error generating local file hash: {e}", None, "ERROR")
             return ""
 
     async def download_mapworld(self, progress_callback=None, force_version: str = None) -> Tuple[bool, Optional[Path]]:
@@ -2876,15 +2873,15 @@ class MapWorldUpdater:
                         content_disposition = head_response.headers.get('content-disposition', '')
                         if 'filename=' in content_disposition:
                             suggested_filename = content_disposition.split('filename=')[1].strip('"\'')
-                            logger.debug(f"Server suggested filename: {suggested_filename}")
+                            log(f"Server suggested filename: {suggested_filename}", None, "DEBUG")
                             
                             # Try to extract version from suggested filename
                             version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', suggested_filename)
                             if version_match and self._is_valid_version(version_match.group(1)):
                                 download_version = version_match.group(1)
-                                logger.info(f"Found version in server filename: {download_version}")
+                                log(f"Found version in server filename: {download_version}", None, "INFO")
                     except Exception as e:
-                        logger.debug(f"Could not get version from headers: {e}")
+                        log(f"Could not get version from headers: {e}", None, "DEBUG")
                 
                 # Download the file
                 async with client.stream(
@@ -2912,20 +2909,20 @@ class MapWorldUpdater:
             else:
                 version_name = download_version
                 version_code = "0"
-                logger.info(f"Using provided version: {version_name}")
+                log(f"Using provided version: {version_name}", None, "INFO")
             
             # If we still don't have a good version, try to get it from the APK content
             if not self._is_valid_version(version_name):
-                logger.warning(f"Invalid version '{version_name}', attempting deeper analysis...")
+                log(f"Invalid version '{version_name}', attempting deeper analysis...", None, "WARNING")
                 
                 # Try to extract from APK content more aggressively
                 try:
                     extracted_version = await self._deep_version_analysis(temp_path)
                     if extracted_version and self._is_valid_version(extracted_version):
                         version_name = extracted_version
-                        logger.info(f"Deep analysis found version: {version_name}")
+                        log(f"Deep analysis found version: {version_name}", None, "INFO")
                 except Exception as e:
-                    logger.debug(f"Deep analysis failed: {e}")
+                    log(f"Deep analysis failed: {e}", None, "DEBUG")
             
             # If we still don't have a valid version, ask user or use current date
             if not self._is_valid_version(version_name):
@@ -2933,14 +2930,14 @@ class MapWorldUpdater:
                 url_version = re.search(r'(\d+\.\d+(?:\.\d+)?)', self.config.download_url)
                 if url_version and self._is_valid_version(url_version.group(1)):
                     version_name = url_version.group(1)
-                    logger.info(f"Found version in download URL: {version_name}")
+                    log(f"Found version in download URL: {version_name}", None, "INFO")
                 else:
                     # Use today's date as fallback (better than timestamp)
                     today = datetime.datetime.now()
                     version_name = f"{today.year % 100}.{today.month}.{today.day}"  # 25.8.3 format
-                    logger.warning(f"Using date-based version: {version_name}")
+                    log(f"Using date-based version: {version_name}", None, "WARNING")
             
-            logger.info(f"Final determined version: {version_name} (code: {version_code})")
+            log(f"Final determined version: {version_name} (code: {version_code})", None, "INFO")
             
             # Generate versioned filename
             versioned_filename = self.get_versioned_filename(version_name, version_code)
@@ -2948,26 +2945,26 @@ class MapWorldUpdater:
             
             # Check if this exact version already exists
             if final_path.exists():
-                logger.warning(f"Version {version_name} already exists, checking if different...")
+                log(f"Version {version_name} already exists, checking if different...", None, "WARNING")
                 
                 # Compare file sizes to see if it's actually different
                 existing_size = final_path.stat().st_size
                 new_size = temp_path.stat().st_size
                 
                 if abs(existing_size - new_size) < 1024:  # Less than 1KB difference
-                    logger.info(f"Same version and size, keeping existing file")
+                    log(f"Same version and size, keeping existing file", None, "INFO")
                     temp_path.unlink()
                     if backup_path and backup_path.exists():
                         backup_path.unlink()
                     return True, final_path
                 else:
-                    logger.info(f"Same version but different size, updating file")
+                    log(f"Same version but different size, updating file", None, "INFO")
                     final_path.unlink()
             
             # Move temp file to final versioned location
             temp_path.replace(final_path)
             
-            logger.info(f"Successfully downloaded MapWorld APK v{version_name} ({downloaded} bytes)")
+            log(f"Successfully downloaded MapWorld APK v{version_name} ({downloaded} bytes)", None, "INFO")
             
             # Cleanup old versions
             self.cleanup_old_versions()
@@ -2975,13 +2972,13 @@ class MapWorldUpdater:
             # Remove backup file if download was successful
             if backup_path and backup_path.exists():
                 backup_path.unlink()
-                logger.debug("Removed backup file after successful download")
+                log("Removed backup file after successful download", None, "DEBUG")
             
             await self._notify_update_downloaded("MapWorld", version_name)
             return True, final_path
             
         except Exception as e:
-            logger.error(f"Download failed: {e}")
+            log(f"Download failed: {e}", None, "ERROR")
             
             # Clean up temp file if it exists
             if temp_path and temp_path.exists():
@@ -2993,9 +2990,9 @@ class MapWorldUpdater:
                     current_apk = self.get_current_apk_path()
                     if current_apk:
                         backup_path.replace(current_apk)
-                        logger.info("Restored backup after failed download")
+                        log("Restored backup after failed download", None, "INFO")
                 except Exception as restore_error:
-                    logger.error(f"Error restoring backup: {restore_error}")
+                    log(f"Error restoring backup: {restore_error}", None, "ERROR")
             
             return False, None
     
@@ -3042,7 +3039,7 @@ class MapWorldUpdater:
             # Check ADB connection first
             connected, error = await self._check_adb_connection_async(device_ip)
             if not connected:
-                logger.warning(f"Cannot check version on {device_ip}: {error}")
+                log(f"Cannot check version on {device_ip}: {error}", None, "WARNING")
                 return None, None
             
             # Method 1: Try to get version via dumpsys
@@ -3059,7 +3056,7 @@ class MapWorldUpdater:
                 for line in result.stdout.split('\n'):
                     if 'versionName=' in line:
                         version_name = line.split('versionName=')[1].strip()
-                        logger.debug(f"Found installed version on {device_ip}: {version_name}")
+                        log(f"Found installed version on {device_ip}: {version_name}", device_ip, "DEBUG")
                         return version_name, None
             
             # Method 2: Try pm list with version
@@ -3075,7 +3072,7 @@ class MapWorldUpdater:
                 for line in result.stdout.split('\n'):
                     if 'versionName=' in line:
                         version_name = line.split('versionName=')[1].strip()
-                        logger.debug(f"Found installed version via pm dump on {device_ip}: {version_name}")
+                        log(f"Found installed version via pm dump on {device_ip}: {version_name}", device_ip, "DEBUG")
                         return version_name, None
             
             # Method 3: Check if package exists at all
@@ -3088,14 +3085,14 @@ class MapWorldUpdater:
             )
             
             if result.returncode == 0 and result.stdout and self.config.package_name in result.stdout:
-                logger.debug(f"Package found on {device_ip}, but version extraction failed")
+                log(f"Package found on {device_ip}, but version extraction failed", device_ip, "DEBUG")
                 return "unknown", None
             
-            logger.info(f"MapWorld (package: {self.config.package_name}) not installed on {device_ip}")
+            log(f"MapWorld (package: {self.config.package_name}) not installed on {device_ip}", device_ip, "INFO")
             return None, None
             
         except Exception as e:
-            logger.error(f"Error checking installed version on {device_ip}: {e}")
+            log(f"Error checking installed version on {device_ip}: {e}", device_ip, "ERROR")
             return None, None
     
     def compare_versions(self, version1: str, version2: str) -> int:
@@ -3127,7 +3124,7 @@ class MapWorldUpdater:
             return 0
             
         except Exception as e:
-            logger.error(f"Error comparing versions {version1} vs {version2}: {e}")
+            log(f"Error comparing versions {version1} vs {version2}: {e}", None, "ERROR")
             return 0  # Treat as equal if comparison fails
 
     async def should_update_device(self, device_ip: str, new_version: str) -> Tuple[bool, str]:
@@ -3151,7 +3148,7 @@ class MapWorldUpdater:
                 return False, f"Newer version already installed: {installed_version} > {new_version}"
                 
         except Exception as e:
-            logger.error(f"Error checking if update needed for {device_ip}: {e}")
+            log(f"Error checking if update needed for {device_ip}: {e}", device_ip, "ERROR")
             return True, f"Error checking version, will attempt update: {str(e)}"
 
     async def install_mapworld(self, device_ip: str, force_install: bool = False) -> bool:
@@ -3160,7 +3157,7 @@ class MapWorldUpdater:
             # Get the latest APK
             current_apk = self.get_current_apk_path()
             if not current_apk or not current_apk.exists():
-                logger.error("No APK file found for installation")
+                log("No APK file found for installation", None, "ERROR")
                 return False
             
             # Extract version info for comparison
@@ -3170,9 +3167,9 @@ class MapWorldUpdater:
             if not force_install:
                 should_update, reason = await self.should_update_device(device_ip, version_name)
                 if not should_update:
-                    logger.info(f"Skipping installation on {device_ip}: {reason}")
+                    log(f"Skipping installation on {device_ip}: {reason}", device_ip, "INFO")
                     return True  # Return True as it's not an error
-                logger.info(f"Installing on {device_ip}: {reason}")
+                log(f"Installing on {device_ip}: {reason}", device_ip, "INFO")
             
             device_details = get_device_details(device_ip)
             device_name = device_details.get("display_name", device_ip.split(":")[0])
@@ -3180,7 +3177,7 @@ class MapWorldUpdater:
             # Check ADB connection first
             connected, error = await self._check_adb_connection_async(device_ip)
             if not connected:
-                logger.warning(f"Skipping installation on {device_ip}: {error}")
+                log(f"Skipping installation on {device_ip}: {error}", device_ip, "WARNING")
                 return False
             
             # Execute installation command using synchronous method
@@ -3193,15 +3190,15 @@ class MapWorldUpdater:
             )
             
             if result.returncode == 0:
-                logger.info(f"Successfully installed MapWorld v{version_name} on {device_ip}")
+                log(f"Successfully installed MapWorld v{version_name} on {device_ip}", device_ip, "INFO")
                 await self._notify_update_installed(device_name, device_ip, "MapWorld", version_name)
                 return True
             else:
-                logger.error(f"Installation failed on {device_ip}: {result.stderr}")
+                log(f"Installation failed on {device_ip}: {result.stderr}", device_ip, "ERROR")
                 return False
                 
         except Exception as e:
-            logger.error(f"Installation error on {device_ip}: {e}")
+            log(f"Installation error on {device_ip}: {e}", device_ip, "ERROR")
             return False
 
     def get_version_info(self) -> Dict:
@@ -3252,46 +3249,46 @@ async def mapworld_update_task():
     updater = MapWorldUpdater()
     startup_delay = 30
     
-    logger.info(f"MapWorld update task starting in {startup_delay} seconds...")
+    log(f"MapWorld update task starting in {startup_delay} seconds...", None, "INFO")
     await asyncio.sleep(startup_delay)
     
     # Log initial version info
     version_info = updater.get_version_info()
     if version_info["current_version"]:
         current = version_info["current_version"]
-        logger.info(f"Current MapWorld version: {current['version_name']} ({current['filename']})")
+        log(f"Current MapWorld version: {current['version_name']} ({current['filename']})", None, "INFO")
     else:
-        logger.info("No MapWorld APK found")
+        log("No MapWorld APK found", None, "INFO")
     
     while True:
         try:
             update_available, reason = await updater.has_update_available()
-            logger.info(f"Update check result: {reason}")
+            log(f"Update check result: {reason}", None, "INFO")
             
             if update_available:
-                logger.info("New MapWorld version available, starting download...")
+                log("New MapWorld version available, starting download...", None, "INFO")
                 
                 # Download with progress logging
                 async def log_progress(progress):
                     if progress % 10 == 0:  # Log every 10%
-                        logger.info(f"Download progress: {progress:.1f}%")
+                        log(f"Download progress: {progress:.1f}%", None, "INFO")
                 
                 download_success, apk_path = await updater.download_mapworld(log_progress)
                 if not download_success:
-                    logger.error("Download failed, skipping installation")
+                    log("Download failed, skipping installation", None, "ERROR")
                     continue
                 
                 # Log new version info
                 if apk_path:
                     version_name, version_code = updater.extract_apk_version(apk_path)
-                    logger.info(f"Successfully downloaded MapWorld v{version_name} (code: {version_code})")
+                    log(f"Successfully downloaded MapWorld v{version_name} (code: {version_code})", None, "INFO")
                 
                 # Install on all connected devices
                 config = load_config()
                 devices = config.get("devices", [])
                 
                 if not devices:
-                    logger.warning("No devices configured for installation")
+                    log("No devices configured for installation", None, "WARNING")
                     continue
                 
                 # Parallel installation with limited concurrency and better reporting
@@ -3305,22 +3302,22 @@ async def mapworld_update_task():
                         try:
                             # Check current installed version first
                             installed_version, _ = await updater.get_installed_version(device_ip)
-                            logger.info(f"Device {device_name} ({device_ip}): "
-                                      f"installed={installed_version or 'Not installed'}")
+                            log(f"Device {device_name} ({device_ip}): "
+                                      f"installed={installed_version or 'Not installed'}", device_ip, "INFO")
                             
                             result = await updater.install_mapworld(device_ip)
                             
                             if result:
                                 final_version, _ = await updater.get_installed_version(device_ip)
-                                logger.info(f"Device {device_name}: Installation successful, "
-                                          f"now running v{final_version or 'unknown'}")
+                                log(f"Device {device_name}: Installation successful, "
+                                          f"now running v{final_version or 'unknown'}", device_ip, "INFO")
                             else:
-                                logger.warning(f"Device {device_name}: Installation failed")
+                                log(f"Device {device_name}: Installation failed", device_ip, "WARNING")
                             
                             return result
                             
                         except Exception as e:
-                            logger.error(f"Device {device_name}: Installation error: {e}")
+                            log(f"Device {device_name}: Installation error: {e}", device_ip, "ERROR")
                             return False
                 
                 # Execute installations
@@ -3335,7 +3332,7 @@ async def mapworld_update_task():
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
                         failed_installs += 1
-                        logger.error(f"Device {devices[i]['ip']}: Exception during installation: {result}")
+                        log(f"Device {devices[i]['ip']}: Exception during installation: {result}", devices[i]['ip'], "ERROR")
                     elif result is True:
                         successful_installs += 1
                     elif result is False:
@@ -3344,22 +3341,22 @@ async def mapworld_update_task():
                         skipped_installs += 1
                 
                 total_devices = len(devices)
-                logger.info(f"Installation summary: {successful_installs} successful, "
+                log(f"Installation summary: {successful_installs} successful, "
                           f"{skipped_installs} skipped, {failed_installs} failed "
-                          f"out of {total_devices} devices")
+                          f"out of {total_devices} devices", None, "INFO")
                 
                 # Log final version status
                 final_version_info = updater.get_version_info()
-                logger.info(f"Available versions: {final_version_info['total_versions']}")
+                log(f"Available versions: {final_version_info['total_versions']}", None, "INFO")
         
         except Exception as e:
-            logger.error(f"Auto-update error: {e}")
+            log(f"Auto-update error: {e}", None, "ERROR")
             import traceback
             traceback.print_exc()
         
         # Wait for next check
         check_interval = updater.config.check_interval_hours * 3600
-        logger.debug(f"Next update check in {updater.config.check_interval_hours} hours")
+        log(f"Next update check in {updater.config.check_interval_hours} hours", None, "DEBUG")
         await asyncio.sleep(check_interval)
 
 # Optimized Scheduled Task
@@ -3385,21 +3382,21 @@ async def scheduled_update_task():
             )
             
             if should_run:
-                logger.info(f"Running scheduled update check at {now}")
+                log(f"Running scheduled update check at {now}", None, "INFO")
                 
                 # MapWorld Updates
                 updater = MapWorldUpdater()
                 update_available, reason = await updater.has_update_available()
                 
                 if update_available:
-                    logger.info(f"Scheduled update triggered: {reason}")
+                    log(f"Scheduled update triggered: {reason}", None, "INFO")
                     download_success, apk_path = await updater.download_mapworld()
                     
                     if download_success and apk_path:
                         version_name, version_code = updater.extract_apk_version(apk_path)
-                        logger.info(f"Scheduled download completed: MapWorld v{version_name}")
+                        log(f"Scheduled download completed: MapWorld v{version_name}", None, "INFO")
                     else:
-                        logger.error("Scheduled download failed")
+                        log("Scheduled download failed", None, "ERROR")
                 
                 # PoGO Updates (existing function)
                 ensure_latest_apk_downloaded()
@@ -3414,13 +3411,13 @@ async def scheduled_update_task():
                     if date >= cutoff_date
                 }
                 
-                logger.info("Scheduled update check completed")
+                log("Scheduled update check completed", None, "INFO")
             
             # Check every minute
             await asyncio.sleep(60)
             
         except Exception as e:
-            logger.error(f"Error in scheduled update task: {e}")
+            log(f"Error in scheduled update task: {e}", None, "ERROR")
             import traceback
             traceback.print_exc()
             await asyncio.sleep(300)  # Wait 5 minutes on error
@@ -3541,7 +3538,7 @@ async def install_specific_version(device_ip: str, version_name: str = None) -> 
                 break
         
         if not target_apk:
-            logger.error(f"Version {version_name} not found")
+            log(f"Version {version_name} not found", None, "ERROR")
             return False
         
         # Temporarily set APK as "current" for installation
@@ -3592,7 +3589,7 @@ def cleanup_mapworld_versions(keep_versions: int = None) -> int:
         versions_after = len(updater.get_all_apk_versions())
         
         removed_count = versions_before - versions_after
-        logger.info(f"Cleanup completed: removed {removed_count} old versions")
+        log(f"Cleanup completed: removed {removed_count} old versions", None, "INFO")
         return removed_count
         
     finally:
@@ -3606,12 +3603,12 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         current_path = updater.config.apk_dir / current_filename
         
         if not current_path.exists():
-            logger.error(f"File {current_filename} not found")
+            log(f"File {current_filename} not found", None, "ERROR")
             return False
         
         # Validate new version
         if not updater._is_valid_version(correct_version):
-            logger.error(f"Invalid version format: {correct_version}")
+            log(f"Invalid version format: {correct_version}", None, "ERROR")
             return False
         
         # Create new filename
@@ -3619,17 +3616,17 @@ def fix_apk_version(current_filename: str, correct_version: str) -> bool:
         new_path = updater.config.apk_dir / new_filename
         
         if new_path.exists():
-            logger.warning(f"Target filename {new_filename} already exists")
+            log(f"Target filename {new_filename} already exists", None, "WARNING")
             return False
         
         # Rename
         current_path.rename(new_path)
-        logger.info(f"Renamed {current_filename} ->{new_filename}")
+        log(f"Renamed {current_filename} ->{new_filename}", None, "INFO")
         
         return True
         
     except Exception as e:
-        logger.error(f"Error renaming APK: {e}")
+        log(f"Error renaming APK: {e}", None, "ERROR")
         return False
 
 async def force_download_with_version(version: str) -> bool:
@@ -3637,18 +3634,18 @@ async def force_download_with_version(version: str) -> bool:
     try:
         updater = MapWorldUpdater()
         
-        logger.info(f"Force downloading MapWorld with version {version}")
+        log(f"Force downloading MapWorld with version {version}", None, "INFO")
         success, apk_path = await updater.download_mapworld(force_version=version)
         
         if success and apk_path:
-            logger.info(f"Successfully downloaded and set version to {version}")
+            log(f"Successfully downloaded and set version to {version}", None, "INFO")
             return True
         else:
-            logger.error("Force download failed")
+            log("Force download failed", None, "ERROR")
             return False
             
     except Exception as e:
-        logger.error(f"Error during force download: {e}")
+        log(f"Error during force download: {e}", None, "ERROR")
         return False
 
 def debug_apk_version(filename: str = None) -> None:
@@ -3682,7 +3679,7 @@ def quick_fix_version() -> bool:
         current_apk = updater.get_current_apk_path()
         
         if not current_apk:
-            logger.error("No current APK found")
+            log("No current APK found", None, "ERROR")
             return False
         
         # Correct to probably right version
@@ -3692,16 +3689,16 @@ def quick_fix_version() -> bool:
         new_path = current_apk.parent / new_filename
         
         if new_path.exists():
-            logger.warning(f"Target file {new_filename} already exists, removing old file")
+            log(f"Target file {new_filename} already exists, removing old file", None, "WARNING")
             current_apk.unlink()
         else:
             current_apk.rename(new_path)
         
-        logger.info(f"Fixed version: {current_apk.name} ->{new_filename}")
+        log(f"Fixed version: {current_apk.name} ->{new_filename}", None, "INFO")
         return True
         
     except Exception as e:
-        logger.error(f"Error fixing version: {e}")
+        log(f"Error fixing version: {e}", None, "ERROR")
         return False
 
 async def redownload_with_correct_version(correct_version: str = "2.55") -> bool:
@@ -3715,33 +3712,33 @@ async def redownload_with_correct_version(correct_version: str = "2.55") -> bool
         if current_apk:
             backup_path = current_apk.with_suffix('.backup')
             current_apk.rename(backup_path)
-            logger.info(f"Backed up current APK to {backup_path.name}")
+            log(f"Backed up current APK to {backup_path.name}", None, "INFO")
         
         # Download with correct version
-        logger.info(f"Re-downloading MapWorld with correct version {correct_version}")
+        log(f"Re-downloading MapWorld with correct version {correct_version}", None, "INFO")
         success, new_path = await updater.download_mapworld(force_version=correct_version)
         
         if success:
-            logger.info(f"Successfully re-downloaded with version {correct_version}")
+            log(f"Successfully re-downloaded with version {correct_version}", None, "INFO")
             
             # Remove backup if successful
             if backup_path and backup_path.exists():
                 backup_path.unlink()
-                logger.info("Removed backup file")
+                log("Removed backup file", None, "INFO")
             
             return True
         else:
-            logger.error("Re-download failed")
+            log("Re-download failed", None, "ERROR")
             
             # Restore backup
             if backup_path and backup_path.exists():
                 backup_path.rename(current_apk)
-                logger.info("Restored backup file")
+                log("Restored backup file", None, "INFO")
             
             return False
             
     except Exception as e:
-        logger.error(f"Error during re-download: {e}")
+        log(f"Error during re-download: {e}", None, "ERROR")
         return False
 
 def list_mapworld_versions() -> None:
