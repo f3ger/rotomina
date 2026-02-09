@@ -5082,10 +5082,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Keep connection alive with ping-pong
                 await asyncio.sleep(1)
     except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
+        await ws_manager.disconnect(websocket)
     except Exception as e:
         log(f"WebSocket error: {e}", None, "ERROR")
-        ws_manager.disconnect(websocket)
+        await ws_manager.disconnect(websocket)
 
 # Regular Routes
 @app.get("/", response_class=HTMLResponse)
