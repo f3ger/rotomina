@@ -630,8 +630,8 @@ function statusPage() {
             if (data.update_in_progress) {
                 this.showUpdateModal = true;
                 this.updateProgress = data.update_progress;
-            } else if (this.updateProgress >= 100) {
-                // Hide modal after completion
+            } else {
+                // Hide modal when update is complete (regardless of progress value)
                 setTimeout(() => {
                     this.showUpdateModal = false;
                 }, 1000);
