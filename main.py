@@ -4863,8 +4863,8 @@ async def get_status_data():
             "control_enabled": dev.get("control_enabled", False),
             "in_update": in_update,
             "update_info": update_info,
-            "runtime": runtime_formatted,
-            "last_runtime": last_runtime_formatted
+            "runtime": current_runtime,
+            "last_runtime": last_runtime
         })
     
     return {
@@ -4877,17 +4877,6 @@ async def get_status_data():
         "update_in_progress": update_in_progress,
         "update_progress": current_progress
     }
-
-# Helper Functions
-def update_progress(progress: int):
-    """
-    Updates the global progress indicator for UI updates
-    
-    Args:
-        progress: Integer value between 0-100 representing progress percentage
-    """
-    global current_progress
-    current_progress = progress
 
 def is_logged_in(request: Request) -> bool:
     return request.session.get("logged_in", False)
@@ -5113,6 +5102,8 @@ def status_page(request: Request):
             update_duration = int(time.time() - devices_in_update[ip]["started_at"])
             update_info = f"{update_type} ({update_duration}s)"
         
+        mem_free_value = status.get("mem_free", 0)
+        
         devices.append({
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
@@ -5121,7 +5112,7 @@ def status_page(request: Request):
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
             "module": details.get("module_version", "N/A"),
-            "mem_free": status.get("mem_free", 0),
+            "mem_free": mem_free_value,
             "last_update": status["last_update"],
             "control_enabled": dev.get("control_enabled", False),
             "in_update": in_update,
