@@ -37,6 +37,10 @@ EXTRACT_DIR = APK_DIR / "extracted"
 POGO_MIRROR_URL = "https://mirror.unownhash.com"
 DEFAULT_ARCH = "arm64-v8a"
 
+device_status_cache = {}
+update_lock = threading.Lock()
+config_lock = threading.RLock()
+update_in_progress = False
 current_progress = 0
 
 # Helper Functions
@@ -123,6 +127,10 @@ class ADBConnectionPool:
     def __init__(self):
         self.connected_devices = set()
         self.last_command_time = {}  # Track when last command was sent to each device
+        self.device_status_cache = {}
+        self.update_lock = threading.Lock()
+        self.config_lock = threading.RLock()
+        self.update_in_progress = False
         self.connection_lock = threading.Lock()
     
     def ensure_connected(self, device_id: str) -> bool:
