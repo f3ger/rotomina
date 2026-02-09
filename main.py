@@ -5695,7 +5695,7 @@ async def websocket_htmx_endpoint(websocket: WebSocket):
             "partials/device_table.html", 
             {"request": {}, "devices": status_data["devices"]}
         )
-        await websocket.send_text(html_response.body.decode())
+        await websocket.send_text(html_response.body.decode('utf-8'))
         
         while True:
             try:
@@ -5707,7 +5707,7 @@ async def websocket_htmx_endpoint(websocket: WebSocket):
                         "partials/device_table.html", 
                         {"request": {}, "devices": status_data["devices"]}
                     )
-                    await websocket.send_text(html_response.body.decode())
+                    await websocket.send_text(html_response.body.decode('utf-8'))
             except asyncio.TimeoutError:
                 await asyncio.sleep(1)
     except WebSocketDisconnect:
