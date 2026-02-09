@@ -36,10 +36,8 @@ APK_DIR = BASE_DIR / "data" / "apks" / "pogo"
 EXTRACT_DIR = APK_DIR / "extracted"
 POGO_MIRROR_URL = "https://mirror.unownhash.com"
 DEFAULT_ARCH = "arm64-v8a"
-device_status_cache = {}
-update_lock = threading.Lock()
-config_lock = threading.RLock()
-update_in_progress = False
+
+current_progress = 0
 
 # Helper Functions
 def update_progress(progress: int):
@@ -52,7 +50,6 @@ def update_progress(progress: int):
     global current_progress
     current_progress = progress
 
-current_progress = 0
 devices_in_update = {}  # Format: {device_id: {"in_update": True, "update_type": "pogo/mitm/pif", "started_at": timestamp}}
 device_runtimes = {}
 device_setup_tasks = {}  # {setup_id: {device_id, step, step_label, progress, error, needs_auth, completed, results}}
@@ -4891,6 +4888,16 @@ async def get_status_data():
 
 def is_logged_in(request: Request) -> bool:
     return request.session.get("logged_in", False)
+
+def update_progress(progress: int):
+    """
+    Updates the global progress indicator for UI updates
+    
+    Args:
+        progress: Integer value between 0-100 representing progress percentage
+    """
+    global current_progress
+    current_progress = progress
 
 def require_login(request: Request):
     if not is_logged_in(request):
