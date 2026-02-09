@@ -1072,11 +1072,18 @@ def read_device_furtif_config(device_id: str) -> dict:
     furtif_config = {}
     
     try:
-        cmd = f'adb -s {device_id} shell "su -c \'cat /data/data/com.github.furtif.furtifformaps/files/config.json\'"'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        # Use base64 encoding to handle special characters properly
+        cat_cmd = f'adb -s {device_id} shell "su -c \"base64 /data/data/com.github.furtif.furtifformaps/files/config.json\""'
+        result = subprocess.run(cat_cmd, shell=True, capture_output=True, text=True, timeout=10)
         
         if result.returncode == 0 and result.stdout:
-            raw_output = result.stdout.strip()
+            import base64
+            try:
+                # Decode base64 to get the original JSON content
+                raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8')
+            except Exception as e:
+                log(f"Failed to decode base64 content: {e}", device_id, "ERROR")
+                return furtif_config
             
             # Use regex to extract values (works with both JSON and JS object format)
             # Extract DiscordData - matches both quoted and unquoted values
@@ -1142,14 +1149,19 @@ def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
     config_path = "/data/data/com.github.furtif.furtifformaps/files/config.json"
     
     try:
-        # First, read the current config from device
-        read_cmd = f'adb -s {device_id} shell "su -c \'cat {config_path}\'"'
+        # First, read the current config from device using base64 to handle special characters
+        read_cmd = f'adb -s {device_id} shell "su -c \"base64 {config_path}\""'
         result = subprocess.run(read_cmd, shell=True, capture_output=True, text=True, timeout=10)
         
         if result.returncode != 0 or not result.stdout:
             return False, f"Could not read config from device: {result.stderr}"
         
-        raw_output = result.stdout.strip()
+        import base64
+        try:
+            # Decode base64 to get the original JSON content
+            raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8')
+        except Exception as e:
+            return False, f"Failed to decode config content: {e}"
         
         # Check if config has content
         if not raw_output or '{' not in raw_output:
