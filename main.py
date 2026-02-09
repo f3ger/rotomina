@@ -864,7 +864,6 @@ async def notify_update_downloaded(update_type: str, version: str):
 
 # Token Validation Functions
 # Fixed API URL for token validation (not configurable)
-TOKEN_VALIDATION_URL = "https://protomines.ddns.net/api/access/get_access_status.php"
 
 async def validate_device_token(token: str) -> dict[bool, str]:
     """
@@ -884,7 +883,7 @@ async def validate_device_token(token: str) -> dict[bool, str]:
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                TOKEN_VALIDATION_URL,
+                "https://protomines.ddns.net/api/access/get_access_status.php",
                 json={"encoded_token": token.strip()},
                 headers={"Content-Type": "application/json"},
                 timeout=15

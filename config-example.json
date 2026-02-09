@@ -7,7 +7,7 @@
     ],
     "devices": [
         {
-            "ip": "1.2.3.4",
+            "ip": "1.2.3.4:5555",
             "display_name": "demo",
             "control_enabled": true,
             "memory_threshold": 200,
@@ -23,15 +23,14 @@
             }
         }
     ],
-    "rotomApiUrl": "rotom_here",
-    "rotomApiUser": "",
-    "rotomApiPass": "",
+    "rotomApiUrl": "http://rotom.example.com/api/status",
+    "rotomApiUser": "user_name",
+    "rotomApiPass": "password",
     "api_check_interval": 60,
     "memory_threshold": 100,
-    "discord_webhook_url": "",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1234567890/abcdefg",
     "pif_auto_update_enabled": false,
     "pogo_auto_update_enabled": true,
     "preferred_module_type": "fix",
-    "device_token": "",
-    "token_validation_url": "https://protomines.ddns.net/api/access/get_access_status.php"
+    "device_token": "device_token"
 }
