@@ -435,26 +435,23 @@
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 {% if config.device_token %}
                                 {% if token_valid %}
-                                <span class="inline-flex items-center gap-1 text-green-400">
+                                <span class="inline-flex items-center text-green-400" title="Valid">
                                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
                                     </svg>
-                                    Valid
                                 </span>
                                 {% else %}
-                                <span class="inline-flex items-center gap-1 text-red-400">
+                                <span class="inline-flex items-center text-red-400" title="Invalid">
                                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
                                     </svg>
-                                    Invalid
                                 </span>
                                 {% endif %}
                                 {% else %}
-                                <span class="inline-flex items-center gap-1 text-gray-400">
+                                <span class="inline-flex items-center text-gray-400" title="Not Set">
                                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/>
                                     </svg>
-                                    Not Set
                                 </span>
                                 {% endif %}
                             </td>
