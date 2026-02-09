@@ -7,21 +7,31 @@
     ],
     "devices": [
         {
-            "ip": "192.168.1.100:5555",
-            "display_name": "Example-Device-01",
-            "pogo_version": "N/A",
-            "mitm_version": "N/A",
-            "module_version": "N/A",
-            "control_enabled": false,
-            "memory_threshold": 200
+            "ip": "1.2.3.4",
+            "display_name": "demo",
+            "control_enabled": true,
+            "memory_threshold": 200,
+            "pogo_version": "0.395.1",
+            "mitm_version": "2.83",
+            "module_version": "",
+            "furtif_config": {
+                "DiscordData": "token_here",
+                "RotomTryAutoStart": false,
+                "RotomDeviceName": "demo",
+                "IsRotomMode": true,
+                "PackageName": "com.nianticlabs.pokemongo"
+            }
         }
     ],
-    "rotomApiUrl": "http://your-api-url/api/status",
-    "rotomApiUser": "apiuser",
-    "rotomApiPass": "apipassword",
+    "rotomApiUrl": "rotom_here",
+    "rotomApiUser": "",
+    "rotomApiPass": "",
     "api_check_interval": 60,
     "memory_threshold": 100,
     "discord_webhook_url": "",
     "pif_auto_update_enabled": false,
-    "pogo_auto_update_enabled": false
+    "pogo_auto_update_enabled": true,
+    "preferred_module_type": "fix",
+    "device_token": "",
+    "token_validation_url": "https://protomines.ddns.net/api/access/get_access_status.php"
 }

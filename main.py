@@ -5125,9 +5125,37 @@ def status_page(request: Request):
 def settings_page(request: Request):
     if redirect := require_login(request):
         return redirect
+    
+    config = load_config()
+    
+    # Check if token is valid - get DiscordData from first device's furtif_config
+    token_valid = False
+    device_token = ""
+    
+    if config.get("devices") and len(config["devices"]) > 0:
+        device = config["devices"][0]
+        # Try to get DiscordData from furtif_config
+        if device.get("furtif_config"):
+            device_token = device["furtif_config"].get("DiscordData", "")
+        
+        if device_token:
+            try:
+                import asyncio
+                # Run validation in sync context
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                is_valid, message = loop.run_until_complete(validate_device_token(device_token))
+                token_valid = is_valid
+                log(f"Token validation result: {is_valid}, message: {message}", None, "CONFIG")
+                loop.close()
+            except Exception as e:
+                log(f"Error validating token in settings: {e}", None, "ERROR")
+                token_valid = False
+    
     return templates.TemplateResponse("settings.html", {
         "request": request,
-        "config": load_config()
+        "config": config,
+        "token_valid": token_valid
     })
 
 @app.post("/settings/save", response_class=HTMLResponse)
@@ -5179,10 +5207,19 @@ async def save_device_token(request: Request, device_token: str = Form("")):
         
         log(f"Token validated successfully: {message}", None, "CONFIG")
     
-    # Save the token
+    # Save the token to the first device's furtif_config.DiscordData field
     config = load_config()
-    config["device_token"] = token
-    save_config(config)
+    if config.get("devices") and len(config["devices"]) > 0:
+        # Ensure furtif_config exists
+        if "furtif_config" not in config["devices"][0]:
+            config["devices"][0]["furtif_config"] = {}
+        
+        config["devices"][0]["furtif_config"]["DiscordData"] = token
+        save_config(config)
+        log(f"DiscordData saved to first device's furtif_config ({len(token)} chars)", None, "CONFIG")
+    else:
+        log("No devices found to save DiscordData", None, "ERROR")
+        return RedirectResponse(url="/settings?error=No devices found to save token", status_code=302)
     
     log(f"Device token saved ({len(token)} chars)", None, "CONFIG")
     
