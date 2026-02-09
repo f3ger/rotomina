@@ -103,9 +103,6 @@ td {
 td:nth-child(7) {
     font-weight: 500;
 }
-td:nth-child(7):contains("°C") {
-    color: var(--accent);
-}
 
 tr:hover {
     background: rgba(255,255,255,0.02);
