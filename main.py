@@ -4636,6 +4636,9 @@ async def update_api_status():
                 
                 if not device_data:
                     device_data = {}
+                    log(f"No matching device data found for {device_id} in API response", device_id, "MONITOR")
+                else:
+                    log(f"Found device data for {device_id}: memFree={device_data.get('lastMemory', {}).get('memFree', 'N/A')}", device_id, "MONITOR")
                 
                 # Get current status values from cache
                 current_cache = device_status_cache.get(device_id, {})
