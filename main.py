@@ -1476,7 +1476,7 @@ def ensure_adb_keys() -> str:
                 log(f"Failed to generate public key: {str(e)}", None, "ERROR")
         
         if public_key_exists:
-            with open(adb_public_key, "r") as f:
+            with open(adb_public_key, "r", encoding="utf-8") as f:
                 content = f.read().strip()
                 log(f"Found ADB public key ({len(content)} bytes)", None, "CONFIG")
                 return content
@@ -1510,14 +1510,14 @@ def sync_system_adb_key():
             log(f"Creating additional keys directory: {additional_keys_dir}", None, "CONFIG")
             additional_keys_dir.mkdir(parents=True, exist_ok=True)
         
-        with open(system_key_path, "r") as f:
+        with open(system_key_path, "r", encoding="utf-8") as f:
             key_content = f.read().strip()
             
         if not key_content:
             log("System ADB key is empty, nothing to sync", None, "CONFIG")
             return False
             
-        with open(target_key_path, "w") as f:
+        with open(target_key_path, "w", encoding="utf-8") as f:
             f.write(key_content)
             
         log(f"Synchronized system ADB key to {target_key_path}", None, "CONFIG")
