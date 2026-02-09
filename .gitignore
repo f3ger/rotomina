@@ -55,4 +55,3 @@ Thumbs.db
 /config.json.bak
 /data/adb/adbkey.pub
 /node_modules/
-*.json

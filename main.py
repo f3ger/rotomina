@@ -59,6 +59,7 @@ device_setup_tasks = {}  # {setup_id: {device_id, step, step_label, progress, er
 
 # Logging Helper
 _display_name_cache = {}
+_display_name_cache_lock = threading.Lock()
 
 def log(message: str, device_id: str = None, category: str = "INFO"):
     """Unified log output with timestamp and device assignment."""
@@ -66,11 +67,12 @@ def log(message: str, device_id: str = None, category: str = "INFO"):
 
     if device_id:
         device_id = format_device_id(device_id)
-        if device_id not in _display_name_cache:
-            config = load_config()
-            device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
-            _display_name_cache[device_id] = device.get("display_name") if device else device_id.split(":")[0]
-        tag = _display_name_cache[device_id]
+        with _display_name_cache_lock:
+            if device_id not in _display_name_cache:
+                config = load_config()
+                device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
+                _display_name_cache[device_id] = device.get("display_name") if device else device_id.split(":")[0]
+            tag = _display_name_cache[device_id]
     else:
         tag = "--SYSTEM--"
 
@@ -78,94 +80,40 @@ def log(message: str, device_id: str = None, category: str = "INFO"):
 
 def clear_display_name_cache(device_id: str = None):
     """Clear cache when display_name is changed."""
-    if device_id:
-        _display_name_cache.pop(format_device_id(device_id), None)
-    else:
-        _display_name_cache.clear()
+    with _display_name_cache_lock:
+        if device_id:
+            _display_name_cache.pop(format_device_id(device_id), None)
+        else:
+            _display_name_cache.clear()
 
-# WebSocket Connection Manager - Optimized with connection pooling and keep-alive
+# WebSocket Connection Manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
-        self.connection_pool: List[WebSocket] = []  # Pool for reusing connections
         self.max_connections = 50  # Maximum concurrent connections
-        self.connection_timeout = 300  # 5 minutes timeout
-        self.last_cleanup = time.time()
-        
-    async def get_connection(self) -> Optional[WebSocket]:
-        """Get or create a connection from the pool"""
-        # Clean up expired connections
-        current_time = time.time()
-        self.connection_pool = [
-            conn for conn in self.connection_pool
-            if current_time - getattr(conn, 'last_used', 0) < self.connection_timeout
-        ]
-        
-        # Return existing connection if available
-        for conn in self.connection_pool:
-            if not hasattr(conn, 'closed') or conn.closed:
-                conn.last_used = current_time
-                return conn
-        
-        # If no available connections and under limit, create new one
-        if len(self.active_connections) + len(self.connection_pool) < self.max_connections:
-            return None  # Signal that new connection needed
-        
-        return self.connection_pool[0] if self.connection_pool else None
-    
+
     async def connect(self, websocket: WebSocket):
-        """Handle new WebSocket connection with pooling"""
-        # Check if we're at connection limit
-        if len(self.active_connections) + len(self.connection_pool) >= self.max_connections:
+        if len(self.active_connections) >= self.max_connections:
             await websocket.close(code=1013, reason="Server overloaded")
             log("Connection rejected: server at maximum capacity", None, "WARNING")
             return
-        
-        # Get or create connection from pool
-        connection = await self.get_connection()
-        if connection is None:
-            # No available connections, accept new one
-            await websocket.accept()
-            self.active_connections.add(websocket)
-            log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
-        else:
-            # Reuse existing connection
-            self.active_connections.add(connection)
-            log(f"WebSocket client connected ({len(self.active_connections)} active) [reused]", None, "API")
-    
-    async def disconnect(self, websocket: WebSocket):
-        """Handle WebSocket disconnection with cleanup"""
+        await websocket.accept()
+        self.active_connections.add(websocket)
+        log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
+
+    def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
-        
-        # Mark connection as closed but keep in pool for potential reuse
-        if hasattr(websocket, 'closed'):
-            websocket.closed = True
-        
-        # Clean up old connections periodically
-        current_time = time.time()
-        if current_time - self.last_cleanup > 60:  # Clean every minute
-            self.connection_pool = [
-                conn for conn in self.connection_pool
-                if current_time - getattr(conn, 'last_used', 0) < self.connection_timeout
-            ]
-            self.last_cleanup = current_time
-            log(f"Connection pool cleaned, {len(self.connection_pool)} active connections", None, "DEBUG")
-    
+        log(f"WebSocket client disconnected ({len(self.active_connections)} active)", None, "API")
+
     async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients"""
         disconnected_websockets = set()
-        
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception as e:
-                log(f"Error broadcasting to WebSocket: {e}", None, "ERROR")
+            except Exception:
                 disconnected_websockets.add(connection)
-        
-        # Remove disconnected websockets
         for ws in disconnected_websockets:
             self.active_connections.discard(ws)
-            
         if disconnected_websockets:
             log(f"Removed {len(disconnected_websockets)} disconnected WebSocket(s) ({len(self.active_connections)} remaining)", None, "API")
 
@@ -707,6 +655,7 @@ def load_config():
         config.setdefault("pif_auto_update_enabled", True)
         config.setdefault("pogo_auto_update_enabled", True)
         config.setdefault("device_token", "")
+        config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
         return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
@@ -863,27 +812,32 @@ async def notify_update_downloaded(update_type: str, version: str):
     )
 
 # Token Validation Functions
-# Fixed API URL for token validation (not configurable)
 
-async def validate_device_token(token: str) -> dict[bool, str]:
+async def validate_device_token(token: str, validation_url: str = None) -> Tuple[bool, str]:
     """
     Validates a device token against the Protomines API.
-    
+
     Args:
         token: The encoded token to validate
-        
+        validation_url: Optional custom validation URL (falls back to config or default)
+
     Returns:
-        dict[bool, str]: (is_valid, message)
+        Tuple[bool, str]: (is_valid, message)
         - is_valid: True if token is valid and has access
         - message: API response message
     """
     if not token or not token.strip():
-        return [False, "No token provided"]
-    
+        return (False, "No token provided")
+
+    # Determine validation URL: parameter > config > hardcoded default
+    if not validation_url:
+        config = load_config()
+        validation_url = config.get("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://protomines.ddns.net/api/access/get_access_status.php",
+                validation_url,
                 json={"encoded_token": token.strip()},
                 headers={"Content-Type": "application/json"},
                 timeout=15
@@ -891,7 +845,7 @@ async def validate_device_token(token: str) -> dict[bool, str]:
             
             if response.status_code != 200:
                 log(f"Token validation API returned status {response.status_code}", None, "ERROR")
-                return [False, f"API error: HTTP {response.status_code}"]
+                return (False, f"API error: HTTP {response.status_code}")
             
             result = response.json()
             
@@ -901,20 +855,20 @@ async def validate_device_token(token: str) -> dict[bool, str]:
             if success:
                 # Check if Access is granted
                 log(f"Token validated successfully: {message}", None, "CONFIG")
-                return [True, message]
+                return (True, message)
             else:
                 log(f"Token validation failed: {message}", None, "CONFIG")
-                return [False, message]
+                return (False, message)
                 
     except httpx.TimeoutException:
         log("Token validation timed out", None, "ERROR")
-        return [False, "Validation timeout"]
+        return (False, "Validation timeout")
     except json.JSONDecodeError:
         log("Token validation returned invalid JSON", None, "ERROR")
-        return [False, "Invalid API response"]
+        return (False, "Invalid API response")
     except Exception as e:
         log(f"Token validation error: {str(e)}", None, "ERROR")
-        return [False, f"Validation error: {str(e)}"]
+        return (False, f"Validation error: {str(e)}")
 
 async def notify_invalid_token(device_name: str, device_ip: str, error_message: str):
     """Sends Discord notification when device token is invalid"""
@@ -5080,10 +5034,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Keep connection alive with ping-pong
                 await asyncio.sleep(1)
     except WebSocketDisconnect:
-        await ws_manager.disconnect(websocket)
+        ws_manager.disconnect(websocket)
     except Exception as e:
         log(f"WebSocket error: {e}", None, "ERROR")
-        await ws_manager.disconnect(websocket)
+        ws_manager.disconnect(websocket)
 
 # Regular Routes
 @app.get("/", response_class=HTMLResponse)
@@ -5133,27 +5087,22 @@ def logout_action(request: Request):
     return RedirectResponse(url="/login")
 
 @app.get("/status", response_class=HTMLResponse)
-def status_page(request: Request):
+async def status_page(request: Request):
     if redirect := require_login(request):
         return redirect
-    
+
     config = load_config()
     devices = []
-    
+
     # Check if token is valid - get device_token (main field)
     token_valid = False
     device_token = config.get("device_token", "")
-    
+
     if device_token:
         try:
-            import asyncio
-            # Run validation in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            is_valid, message = loop.run_until_complete(validate_device_token(device_token))
+            is_valid, message = await validate_device_token(device_token)
             token_valid = is_valid
             log(f"Token validation result in status: {is_valid}, message: {message}", None, "CONFIG")
-            loop.close()
         except Exception as e:
             log(f"Error validating token in status: {e}", None, "ERROR")
             token_valid = False
@@ -5213,26 +5162,21 @@ def status_page(request: Request):
     })
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request):
+async def settings_page(request: Request):
     if redirect := require_login(request):
         return redirect
-    
+
     config = load_config()
-    
+
     # Check if token is valid - get device_token (main field)
     token_valid = False
     device_token = config.get("device_token", "")
-        
+
     if device_token:
         try:
-            import asyncio
-            # Run validation in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            is_valid, message = loop.run_until_complete(validate_device_token(device_token))
+            is_valid, message = await validate_device_token(device_token)
             token_valid = is_valid
             log(f"Token validation result: {is_valid}, message: {message}", None, "CONFIG")
-            loop.close()
         except Exception as e:
             log(f"Error validating token in settings: {e}", None, "ERROR")
             token_valid = False
@@ -5293,26 +5237,18 @@ async def save_device_token(request: Request, device_token: str = Form("")):
             log(f"Error validating token: {e}", None, "ERROR")
             return RedirectResponse(url=f"/settings?error=Token validation error: {e}", status_code=302)
     
-    # Save the token to the first device's furtif_config.DiscordData field
+    # Save token to config and distribute to ALL devices
     config = load_config()
-    log(f"DEBUG: About to save token '{token[:20]}...', devices count: {len(config.get('devices', []))}", None, "CONFIG")
-    if config.get("devices") and len(config["devices"]) > 0:
-        # Ensure furtif_config exists
-        if "furtif_config" not in config["devices"][0]:
-            config["devices"][0]["furtif_config"] = {}
-        
-        # Save to device_token (main field)
-        config["device_token"] = token
-        
-        # Auto-assign to DiscordData in furtif_config
-        if "furtif_config" not in config["devices"][0]:
-            config["devices"][0]["furtif_config"] = {}
-        
-        config["devices"][0]["furtif_config"]["DiscordData"] = token
-        log(f"Token saved to device_token and auto-assigned to DiscordData", None, "CONFIG")
-        
+    config["device_token"] = token
+
+    devices = config.get("devices", [])
+    if devices:
+        for i, device in enumerate(devices):
+            if "furtif_config" not in device:
+                device["furtif_config"] = {}
+            device["furtif_config"]["DiscordData"] = token
+        log(f"Token saved and auto-distributed to {len(devices)} device(s)", None, "CONFIG")
         save_config(config)
-        log(f"DiscordData saved to first device's furtif_config ({len(token)} chars)", None, "CONFIG")
     else:
         log("No devices found to save DiscordData", None, "ERROR")
         return RedirectResponse(url="/settings?error=No devices found to save token", status_code=302)
