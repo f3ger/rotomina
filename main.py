@@ -707,7 +707,6 @@ def load_config():
         config.setdefault("pif_auto_update_enabled", True)
         config.setdefault("pogo_auto_update_enabled", True)
         config.setdefault("device_token", "")
-        config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
         return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
