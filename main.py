@@ -814,13 +814,20 @@ async def notify_update_downloaded(update_type: str, version: str):
 
 # Token Validation Functions
 
-async def validate_device_token(token: str, validation_url: str = None) -> Tuple[bool, str]:
+# Cache for token validation results: {token_hash: (is_valid, message, timestamp)}
+_token_validation_cache: Dict[str, Tuple[bool, str, float]] = {}
+TOKEN_CACHE_TTL = 300  # 5 minutes
+
+async def validate_device_token(token: str, validation_url: str = None, bypass_cache: bool = False) -> Tuple[bool, str]:
     """
     Validates a device token against the Protomines API.
+    Results are cached for 5 minutes to reduce API calls.
+    Retries up to 3 times on server errors (HTTP 5xx).
 
     Args:
         token: The encoded token to validate
         validation_url: Optional custom validation URL (falls back to config or default)
+        bypass_cache: If True, skip the cache and force a fresh API call
 
     Returns:
         Tuple[bool, str]: (is_valid, message)
@@ -830,46 +837,77 @@ async def validate_device_token(token: str, validation_url: str = None) -> Tuple
     if not token or not token.strip():
         return (False, "No token provided")
 
+    token_stripped = token.strip()
+
+    # Check cache first (unless bypassed)
+    if not bypass_cache and token_stripped in _token_validation_cache:
+        cached_valid, cached_msg, cached_time = _token_validation_cache[token_stripped]
+        if time.time() - cached_time < TOKEN_CACHE_TTL:
+            log(f"Token validation from cache: valid={cached_valid}", None, "CONFIG")
+            return (cached_valid, cached_msg)
+
     # Determine validation URL: parameter > config > hardcoded default
     if not validation_url:
         config = load_config()
         validation_url = config.get("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                validation_url,
-                json={"encoded_token": token.strip()},
-                headers={"Content-Type": "application/json"},
-                timeout=15
-            )
-            
-            if response.status_code != 200:
-                log(f"Token validation API returned status {response.status_code}", None, "ERROR")
-                return (False, f"API error: HTTP {response.status_code}")
-            
-            result = response.json()
-            
-            success = result.get("success", False)
-            message = result.get("message", "Unknown response")
-            
-            if success:
-                # Check if Access is granted
-                log(f"Token validated successfully: {message}", None, "CONFIG")
-                return (True, message)
-            else:
-                log(f"Token validation failed: {message}", None, "CONFIG")
-                return (False, message)
-                
-    except httpx.TimeoutException:
-        log("Token validation timed out", None, "ERROR")
-        return (False, "Validation timeout")
-    except json.JSONDecodeError:
-        log("Token validation returned invalid JSON", None, "ERROR")
-        return (False, "Invalid API response")
-    except Exception as e:
-        log(f"Token validation error: {str(e)}", None, "ERROR")
-        return (False, f"Validation error: {str(e)}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    validation_url,
+                    json={"encoded_token": token_stripped},
+                    headers={"Content-Type": "application/json"},
+                    timeout=15
+                )
+
+                if response.status_code >= 500 and attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # 1s, 2s
+                    log(f"Token validation API returned {response.status_code}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})", None, "WARN")
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                if response.status_code != 200:
+                    log(f"Token validation API returned status {response.status_code}", None, "ERROR")
+                    return (False, f"API error: HTTP {response.status_code}")
+
+                result = response.json()
+
+                success = result.get("success", False)
+                message = result.get("message", "Unknown response")
+
+                # Cache the result
+                _token_validation_cache[token_stripped] = (success, message, time.time())
+
+                if success:
+                    log(f"Token validated successfully: {message}", None, "CONFIG")
+                    return (True, message)
+                else:
+                    log(f"Token validation failed: {message}", None, "CONFIG")
+                    return (False, message)
+
+        except httpx.TimeoutException:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                log(f"Token validation timed out, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})", None, "WARN")
+                await asyncio.sleep(wait_time)
+                continue
+            log("Token validation timed out after all retries", None, "ERROR")
+            return (False, "Validation timeout")
+        except json.JSONDecodeError:
+            log("Token validation returned invalid JSON", None, "ERROR")
+            return (False, "Invalid API response")
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                log(f"Token validation error: {str(e)}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})", None, "WARN")
+                await asyncio.sleep(wait_time)
+                continue
+            log(f"Token validation error: {str(e)}", None, "ERROR")
+            return (False, f"Validation error: {str(e)}")
+
+    return (False, "Validation failed after all retries")
 
 async def notify_invalid_token(device_name: str, device_ip: str, error_message: str):
     """Sends Discord notification when device token is invalid"""
@@ -5254,7 +5292,7 @@ async def save_device_token(request: Request, device_token: str = Form("")):
     # Validate token if provided
     if token:
         try:
-            is_valid, message = await validate_device_token(token)
+            is_valid, message = await validate_device_token(token, bypass_cache=True)
             if not is_valid:
                 log(f"Token validation failed: {message}", None, "ERROR")
                 return RedirectResponse(url=f"/settings?error=Invalid token: {message}", status_code=302)
