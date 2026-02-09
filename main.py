@@ -2918,7 +2918,24 @@ class MapWorldUpdater:
                             if progress_callback and total_size > 0:
                                 progress = (downloaded / total_size) * 100
                                 await progress_callback(progress)
-            
+
+            # Check if downloaded file is a ZIP containing an APK (e.g. MapWorld-release.zip)
+            if zipfile.is_zipfile(temp_path):
+                try:
+                    with zipfile.ZipFile(temp_path, 'r') as zf:
+                        apk_files = [f for f in zf.namelist() if f.lower().endswith('.apk')]
+                        if apk_files:
+                            apk_name = apk_files[0]
+                            log(f"Downloaded file is a ZIP archive, extracting APK: {apk_name}", None, "INFO")
+                            extracted_apk_path = self.config.apk_dir / f"{self.config.apk_base_name}_temp_extracted.apk"
+                            with zf.open(apk_name) as src, open(extracted_apk_path, 'wb') as dst:
+                                shutil.copyfileobj(src, dst)
+                            temp_path.unlink()
+                            extracted_apk_path.replace(temp_path)
+                            log(f"Successfully extracted APK from ZIP ({temp_path.stat().st_size} bytes)", None, "INFO")
+                except zipfile.BadZipFile:
+                    log("Downloaded file appears corrupt, continuing with raw file", None, "WARNING")
+
             # Extract version information from downloaded APK
             if not download_version:
                 version_name, version_code = self.extract_apk_version(temp_path)
