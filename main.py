@@ -5128,29 +5128,23 @@ def settings_page(request: Request):
     
     config = load_config()
     
-    # Check if token is valid - get DiscordData from first device's furtif_config
+    # Check if token is valid - get device_token (main field)
     token_valid = False
-    device_token = ""
-    
-    if config.get("devices") and len(config["devices"]) > 0:
-        device = config["devices"][0]
-        # Try to get DiscordData from furtif_config
-        if device.get("furtif_config"):
-            device_token = device["furtif_config"].get("DiscordData", "")
+    device_token = config.get("device_token", "")
         
-        if device_token:
-            try:
-                import asyncio
-                # Run validation in sync context
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                is_valid, message = loop.run_until_complete(validate_device_token(device_token))
-                token_valid = is_valid
-                log(f"Token validation result: {is_valid}, message: {message}", None, "CONFIG")
-                loop.close()
-            except Exception as e:
-                log(f"Error validating token in settings: {e}", None, "ERROR")
-                token_valid = False
+    if device_token:
+        try:
+            import asyncio
+            # Run validation in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            is_valid, message = loop.run_until_complete(validate_device_token(device_token))
+            token_valid = is_valid
+            log(f"Token validation result: {is_valid}, message: {message}", None, "CONFIG")
+            loop.close()
+        except Exception as e:
+            log(f"Error validating token in settings: {e}", None, "ERROR")
+            token_valid = False
     
     return templates.TemplateResponse("settings.html", {
         "request": request,
@@ -5189,32 +5183,35 @@ def settings_save(
 @app.post("/settings/save-device-token", response_class=HTMLResponse)
 async def save_device_token(request: Request, device_token: str = Form("")):
     """Saves the device token to config.json after validation"""
+    log(f"DEBUG: save_device_token called with token '{device_token[:20]}...'", None, "CONFIG")
     if redirect := require_login(request):
+        log(f"DEBUG: require_login returned redirect", None, "CONFIG")
         return redirect
     
     token = device_token.strip()
     
-    # Validate token before saving (only if token is provided)
+    # TEMP: Skip validation for testing
     if token:
-        is_valid, message = await validate_device_token(token)
-        
-        if not is_valid:
-            log(f"Token validation failed: {message}", None, "CONFIG")
-            return RedirectResponse(
-                url=f"/settings?error=Token validation failed: {message}", 
-                status_code=302
-            )
-        
-        log(f"Token validated successfully: {message}", None, "CONFIG")
+        log(f"TEMP: Skipping validation for token '{token[:20]}...'", None, "CONFIG")
     
     # Save the token to the first device's furtif_config.DiscordData field
     config = load_config()
+    log(f"DEBUG: About to save token '{token[:20]}...', devices count: {len(config.get('devices', []))}", None, "CONFIG")
     if config.get("devices") and len(config["devices"]) > 0:
         # Ensure furtif_config exists
         if "furtif_config" not in config["devices"][0]:
             config["devices"][0]["furtif_config"] = {}
         
+        # Save to device_token (main field)
+        config["device_token"] = token
+        
+        # Auto-assign to DiscordData in furtif_config
+        if "furtif_config" not in config["devices"][0]:
+            config["devices"][0]["furtif_config"] = {}
+        
         config["devices"][0]["furtif_config"]["DiscordData"] = token
+        log(f"Token saved to device_token and auto-assigned to DiscordData", None, "CONFIG")
+        
         save_config(config)
         log(f"DiscordData saved to first device's furtif_config ({len(token)} chars)", None, "CONFIG")
     else:

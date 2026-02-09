@@ -145,14 +145,14 @@
                                 </form>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                {% if loop.first and config.devices and config.devices|length > 0 and config.devices[0].furtif_config and config.devices[0].furtif_config.DiscordData %}
+                                {% if loop.first and config.device_token %}
                                     {% if token_valid %}
                                         <span class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
                                     {% else %}
                                         <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
                                     {% endif %}
                                 {% else %}
-                                    {% if config.devices and config.devices|length > 0 and config.devices[0].furtif_config and config.devices[0].furtif_config.DiscordData %}
+                                    {% if config.device_token %}
                                         <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
                                     {% else %}
                                         <span class="px-2 py-1 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
@@ -235,7 +235,7 @@
                                id="device_token" 
                                name="device_token" 
                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full max-w-xl p-2.5" 
-                               value="{% if config.devices and config.devices|length > 0 and config.devices[0].furtif_config %}{{ config.devices[0].furtif_config.DiscordData }}{% endif %}"
+                               value="{{ config.device_token or '' }}"
                                placeholder="Enter device token...">
                         <button type="button" 
                                 onclick="toggleTokenVisibility()" 
@@ -245,7 +245,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                             </svg>
                         </button>
-                        {% if config.devices and config.devices|length > 0 and config.devices[0].furtif_config and config.devices[0].furtif_config.DiscordData %}
+                        {% if config.device_token %}
                             {% if token_valid %}
                                 <span class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">Configured</span>
                             {% else %}
