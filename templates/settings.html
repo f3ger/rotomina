@@ -447,8 +447,8 @@
     </div>
 
     <!-- Add Device Modal -->
-    <div x-show="showAddDeviceModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" x-cloak>
-        <div class="bg-dark-800 rounded-lg shadow-xl max-w-lg w-full p-6"
+    <div x-show="showAddDeviceModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" x-cloak>
+        <div class="bg-dark-800 rounded-lg shadow-xl max-w-lg w-full p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
             @click.away="!setupId && (showAddDeviceModal = false)">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-xl font-medium text-gray-100" x-text="setupId ? 'Device Setup' : 'Add New Device'"></h3>
