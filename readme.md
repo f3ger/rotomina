@@ -62,13 +62,9 @@ mkdir -p data
 docker-compose up -d
 ```
 
-**Default credentials will be created automatically:**
-- Username: `admin`
-- Password: `admin`
+4. **Complete the setup wizard** — on first launch, a setup wizard will guide you through creating your admin account.
 
-> ⚠️ **SECURITY WARNING**: Change these credentials immediately after first login!
-
-4. **Access the web interface** at http://localhost:8000
+5. **Access the web interface** at http://localhost:8000
 
 ### Alternative Installation Methods
 
@@ -78,7 +74,6 @@ docker run -d \
   --name rotomina \
   --restart unless-stopped \
   -p 8000:8000 \
-  -v $(pwd)/config.json:/app/config.json \
   -v $(pwd)/data:/app/data \
   --privileged \
   ghcr.io/f3ger/rotomina:latest
@@ -115,37 +110,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ## ⚙️ Configuration
 
 ### Initial Setup
-On first run, a `config.json` file will be created with default settings:
-
-```json
-{
-  "users": [
-    {
-      "username": "admin",
-      "password": "admin"
-    }
-  ],
-  "devices": [
-    {
-      "ip": "1.2.3.4:5555",
-      "display_name": "demo",
-      "control_enabled": true,
-      "memory_threshold": 200,
-      "memory_unit": "MB"
-    }
-  ],
-  "rotomApiUrl": "http://rotom.example.com/api/status",
-  "rotomApiUser": "user_name", 
-  "rotomApiPass": "password",
-  "discord_webhook_url": "https://discord.com/api/webhooks/1234567890/abcdefg",
-  "api_check_interval": 60,
-  "memory_threshold": 100,
-  "pif_auto_update_enabled": false,
-  "pogo_auto_update_enabled": true,
-  "preferred_module_type": "fix",
-  "device_token": "device_token"
-}
-```
+On first run, a setup wizard will guide you through creating your admin account. The `config.json` file is generated automatically — all configuration is managed through the web UI (Settings page).
 
 ### Device Management
 Add devices via the web interface using:
@@ -163,7 +128,7 @@ Add devices via the web interface using:
 
 ### Getting Started
 1. **Access the web interface** at `http://your-server-ip:8000`
-2. **Log in** with your configured credentials
+2. **Complete the setup wizard** to create your admin account
 3. **Add devices** in the Settings page
 4. **Monitor and manage** devices from the Status page
 
@@ -262,7 +227,7 @@ docker-compose up -d
 
 ## 🔒 Security Considerations
 
-- **Default Credentials**: Always change from `admin:admin`
+- **Admin Account**: Set a strong password during the setup wizard
 - **Network Access**: Restrict access to trusted networks
 - **API Tokens**: Keep device tokens secure and rotate regularly
 - **HTTPS**: Use SSL/TLS in production environments
@@ -281,7 +246,7 @@ rotomina/
 │   └── login.html      # Authentication page
 ├── static/             # Static assets (CSS, JS, images)
 ├── data/               # Application data directory
-└── config.json         # Configuration file
+└── config.json         # Auto-generated configuration file
 ```
 
 ### Key Components
