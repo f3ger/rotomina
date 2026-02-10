@@ -3,6 +3,98 @@
 {% block content %}
 <div class="flex items-center justify-center mt-8">
     <div class="w-full max-w-md">
+        {% if setup_mode %}
+        {# ── Setup Wizard ── #}
+        <div class="bg-dark-800 shadow-lg rounded-lg px-8 pt-6 pb-8 mb-4"
+            x-data="{ username: '', password: '', password_confirm: '', errors: {}, isSubmitting: false }"
+            x-init="$nextTick(() => $refs.usernameInput.focus())">
+            <h2 class="text-2xl font-bold mb-2 text-center text-gray-100">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 inline mr-2" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Initial Setup
+            </h2>
+            <p class="text-gray-400 text-sm text-center mb-6">Create your admin account to get started.</p>
+
+            {% if error %}
+            <div class="bg-red-900/50 border border-red-800 text-red-100 px-4 py-3 rounded mb-4" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline mr-1" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="/setup" method="post"
+                x-on:submit.prevent="
+                    errors = {};
+                    if (!username.trim()) errors.username = 'Username is required';
+                    if (password.length < 4) errors.password = 'Password must be at least 4 characters';
+                    if (password !== password_confirm) errors.password_confirm = 'Passwords do not match';
+                    if (Object.keys(errors).length === 0) { isSubmitting = true; $el.submit(); }
+                ">
+                <div class="mb-4">
+                    <label class="block text-gray-300 text-sm font-bold mb-2" for="username">
+                        Username
+                    </label>
+                    <input
+                        class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        id="username" type="text" name="username" placeholder="Username" required x-model="username"
+                        x-ref="usernameInput">
+                    <p class="text-red-500 text-xs italic mt-1" x-show="errors.username" x-text="errors.username"></p>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-gray-300 text-sm font-bold mb-2" for="password">
+                        Password
+                    </label>
+                    <input
+                        class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        id="password" type="password" name="password" placeholder="Password (min. 4 characters)" required x-model="password">
+                    <p class="text-red-500 text-xs italic mt-1" x-show="errors.password" x-text="errors.password"></p>
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-gray-300 text-sm font-bold mb-2" for="password_confirm">
+                        Confirm Password
+                    </label>
+                    <input
+                        class="shadow appearance-none border rounded w-full py-2 px-3 bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        id="password_confirm" type="password" name="password_confirm" placeholder="Confirm password" required x-model="password_confirm">
+                    <p class="text-red-500 text-xs italic mt-1" x-show="errors.password_confirm" x-text="errors.password_confirm"></p>
+                </div>
+
+                <div>
+                    <button
+                        class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-all duration-200 flex items-center justify-center"
+                        type="submit" x-bind:disabled="isSubmitting || !username || !password || !password_confirm"
+                        x-bind:class="{ 'opacity-50 cursor-not-allowed': isSubmitting }">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" x-show="!isSubmitting">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <svg class="animate-spin h-5 w-5 mr-2 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none"
+                            viewBox="0 0 24 24" x-show="isSubmitting">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                            </circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                            </path>
+                        </svg>
+                        <span x-text="isSubmitting ? 'Creating account...' : 'Create Admin Account'"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        {% else %}
+        {# ── Normal Login ── #}
         <div class="bg-dark-800 shadow-lg rounded-lg px-8 pt-6 pb-8 mb-4"
             x-data="{ username: '', password: '', errors: {}, isSubmitting: false }">
             <h2 class="text-2xl font-bold mb-6 text-center text-gray-100">
@@ -71,6 +163,7 @@
                 </div>
             </form>
         </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

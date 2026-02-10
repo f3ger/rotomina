@@ -21,7 +21,7 @@ from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -657,6 +657,11 @@ def load_config():
         config.setdefault("pogo_auto_update_enabled", True)
         config.setdefault("device_token", "")
         return config
+
+def needs_setup() -> bool:
+    """Check if initial setup is needed (no users configured)."""
+    config = load_config()
+    return len(config.get("users", [])) == 0
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
     """
@@ -5108,6 +5113,8 @@ def root(request: Request):
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
+    if needs_setup():
+        return templates.TemplateResponse("login.html", {"request": request, "setup_mode": True})
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/login", response_class=HTMLResponse)
@@ -5140,6 +5147,35 @@ def login_action(request: Request, username: str = Form(...), password: str = Fo
         "request": request,
         "error": "Invalid credentials"
     })
+
+@app.post("/setup")
+def setup_action(request: Request, username: str = Form(...), password: str = Form(...), password_confirm: str = Form(...)):
+    if not needs_setup():
+        raise HTTPException(status_code=403, detail="Setup already completed")
+
+    errors = []
+    if not username.strip():
+        errors.append("Username is required")
+    if len(password) < 4:
+        errors.append("Password must be at least 4 characters")
+    if password != password_confirm:
+        errors.append("Passwords do not match")
+
+    if errors:
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "setup_mode": True,
+            "error": ". ".join(errors)
+        })
+
+    config = load_config()
+    config["users"].append({"username": username.strip(), "password": password})
+    save_config(config)
+
+    request.session["logged_in"] = True
+    request.session["username"] = username.strip()
+    log(f"Initial admin account '{username.strip()}' created via setup wizard", None, "CONFIG")
+    return RedirectResponse(url="/status", status_code=303)
 
 @app.get("/logout")
 def logout_action(request: Request):
