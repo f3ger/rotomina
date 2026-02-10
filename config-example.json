@@ -32,6 +32,5 @@
     "pif_auto_update_enabled": false,
     "pogo_auto_update_enabled": true,
     "preferred_module_type": "fix",
-    "device_token": "YOUR_TOKEN_HERE",
-    "token_validation_url": "https://protomines.ddns.net/api/access/get_access_status.php"
+    "device_token": "YOUR_TOKEN_HERE"
 }

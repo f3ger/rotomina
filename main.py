@@ -656,7 +656,6 @@ def load_config():
         config.setdefault("pif_auto_update_enabled", True)
         config.setdefault("pogo_auto_update_enabled", True)
         config.setdefault("device_token", "")
-        config.setdefault("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
         return config
 
 def update_device_info(ip: str, details: dict, furtif_config: dict = None):
@@ -818,7 +817,7 @@ async def notify_update_downloaded(update_type: str, version: str):
 _token_validation_cache: Dict[str, Tuple[bool, str, float]] = {}
 TOKEN_CACHE_TTL = 300  # 5 minutes
 
-async def validate_device_token(token: str, validation_url: str = None, bypass_cache: bool = False) -> Tuple[bool, str]:
+async def validate_device_token(token: str, bypass_cache: bool = False) -> Tuple[bool, str]:
     """
     Validates a device token against the Protomines API.
     Results are cached for 5 minutes to reduce API calls.
@@ -826,7 +825,6 @@ async def validate_device_token(token: str, validation_url: str = None, bypass_c
 
     Args:
         token: The encoded token to validate
-        validation_url: Optional custom validation URL (falls back to config or default)
         bypass_cache: If True, skip the cache and force a fresh API call
 
     Returns:
@@ -846,10 +844,8 @@ async def validate_device_token(token: str, validation_url: str = None, bypass_c
             log(f"Token validation from cache: valid={cached_valid}", None, "CONFIG")
             return (cached_valid, cached_msg)
 
-    # Determine validation URL: parameter > config > hardcoded default
-    if not validation_url:
-        config = load_config()
-        validation_url = config.get("token_validation_url", "https://protomines.ddns.net/api/access/get_access_status.php")
+    # Fixed internal validation URL
+    validation_url = "https://protomines.ddns.net/api/access/get_access_status.php"
 
     max_retries = 3
     for attempt in range(max_retries):
