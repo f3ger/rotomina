@@ -2106,6 +2106,11 @@ async def reboot_and_wait(device_id: str) -> bool:
         log("Rebooting device to reclaim storage", device_id, "UPDATE")
         adb_pool.execute_command(device_id, ["adb", "reboot"])
 
+        # Invalidate ADB connection cache so ensure_connected actually checks
+        with adb_pool.connection_lock:
+            adb_pool.connected_devices.discard(device_id)
+            adb_pool.last_command_time.pop(device_id, None)
+
         # Wait for device to come back online (max 5 minutes)
         for i in range(30):
             await asyncio.sleep(10)
@@ -2153,10 +2158,34 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Mark device as in update
         mark_device_in_update(device_ip, "pogo")
         update_progress(10)
-        
+
         device_details = get_device_details(device_ip)
         device_name = device_details.get("display_name", device_ip.split(":")[0])
-        
+
+        # Wait for device to be online before attempting installation (max 3 minutes)
+        device_ip_formatted = format_device_id(device_ip)
+        if not adb_pool.ensure_connected(device_ip_formatted):
+            log("Device not online, waiting for it to come online before installation", device_ip, "UPDATE")
+            device_online = False
+            for i in range(18):  # max 3 minutes (18 * 10s)
+                await asyncio.sleep(10)
+                try:
+                    if adb_pool.ensure_connected(device_ip_formatted):
+                        log(f"Device came online after {(i + 1) * 10}s", device_ip, "UPDATE")
+                        device_online = True
+                        break
+                except Exception:
+                    continue
+            if not device_online:
+                log("Device did not come online within 3 minutes, aborting installation", device_ip, "ERROR")
+                await send_discord_notification(
+                    message=f"Installation aborted for **{device_name}** ({device_ip}). Device did not come online within 3 minutes.",
+                    title="Installation Aborted - Device Offline",
+                    color=DISCORD_COLOR_RED
+                )
+                clear_device_update_status(device_ip)
+                return False
+
         # Find APK files
         apk_files = list(extract_dir.glob("*.apk"))
         if not apk_files:
@@ -2231,6 +2260,16 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if installation_success:
                 log(f"{strategy_name.title()} installation successful", device_ip, "UPDATE")
                 break
+            elif "offline" in error_msg.lower() or "not connected" in error_msg.lower() or "Cannot connect" in error_msg:
+                # Device connectivity error - wait and retry with next strategy
+                log(f"Device appears offline, waiting before next attempt: {error_msg}", device_ip, "UPDATE")
+                await asyncio.sleep(15)
+                # Invalidate ADB cache so next attempt does a real check
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
+                continue
             elif error_msg != "INSUFFICIENT_STORAGE":
                 # Non-storage error, don't continue with other strategies
                 log(f"Installation failed with non-storage error: {error_msg}", device_ip, "ERROR")
