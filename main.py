@@ -2224,7 +2224,11 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         # Mark device as in update
         mark_device_in_update(device_ip, "pogo")
         update_progress(10)
-        
+
+        # Broadcast immediately so UI shows spinner
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+
         device_details = get_device_details(device_ip)
         device_name = device_details.get("display_name", device_ip.split(":")[0])
 
@@ -4250,7 +4254,11 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
     try:
         # Mark device as in update
         mark_device_in_update(device_ip, f"pif-{module_type}")
-        
+
+        # Broadcast immediately so UI shows spinner
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+
         device_id = format_device_id(device_ip)
         log(f"Starting {module_type.upper()} module installation", device_ip, "UPDATE")
         
@@ -5622,17 +5630,21 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
     if not target_version:
         return RedirectResponse(url="/status?error=Version not found", status_code=302)
     
+    global update_in_progress, current_progress
     try:
+        update_in_progress = True
+        current_progress = 0
+
         apk_file = APK_DIR / target_version["filename"]
         if not apk_file.exists():
             apk_file = download_apk(target_version)
-        
+
         specific_extract_dir = EXTRACT_DIR / target_version["version"]
         specific_extract_dir.mkdir(parents=True, exist_ok=True)
         unzip_apk(apk_file, specific_extract_dir)
-        
+
         success = await optimized_perform_installation(device_ip, specific_extract_dir)
-        
+
         if success:
             return RedirectResponse(url="/status?success=Pokemon GO updated successfully", status_code=302)
         else:
@@ -5640,6 +5652,9 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
     except Exception as e:
         log(f"Error updating to version {version}: {str(e)}", device_ip, "ERROR")
         return RedirectResponse(url="/status?error=Update failed", status_code=302)
+    finally:
+        update_in_progress = False
+        current_progress = 0
 
 @app.post("/pogo/update", response_class=HTMLResponse)
 async def pogo_update(request: Request):

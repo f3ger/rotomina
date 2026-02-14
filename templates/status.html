@@ -514,7 +514,7 @@
             </div>
             <!-- Device list -->
             <div class="max-h-60 overflow-y-auto space-y-2">
-                <template x-for="device in sortedDevices" :key="'update-' + device.ip">
+                <template x-for="device in sortedDevices.filter(d => d.in_update || updatedDevices.includes(d.ip))" :key="'update-' + device.ip">
                     <div class="flex items-center gap-3 px-3 py-2 rounded-md bg-gray-900/40">
                         <!-- Status icon -->
                         <div class="flex-none">
