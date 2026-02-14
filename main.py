@@ -5635,6 +5635,11 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
         update_in_progress = True
         current_progress = 0
 
+        # Mark device and broadcast immediately so UI shows spinner
+        mark_device_in_update(device_ip, "pogo")
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+
         apk_file = APK_DIR / target_version["filename"]
         if not apk_file.exists():
             apk_file = download_apk(target_version)
