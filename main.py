@@ -1996,6 +1996,9 @@ async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[b
         log("Multiple APKs installed successfully", device_id, "UPDATE")
         return True, "SUCCESS"
             
+    except subprocess.TimeoutExpired:
+        log(f"APK installation timed out after 300 seconds", device_id, "ERROR")
+        return False, "TIMEOUT: install-multiple timed out after 300 seconds"
     except Exception as e:
         log(f"APK installation error: {str(e)}", device_id, "ERROR")
         return False, f"EXCEPTION: {str(e)}"
@@ -2260,6 +2263,14 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if installation_success:
                 log(f"{strategy_name.title()} installation successful", device_ip, "UPDATE")
                 break
+            elif error_msg.startswith("TIMEOUT:") or "timed out" in error_msg.lower():
+                # ADB command timed out - device is stuck, continue to next strategy (reboot)
+                log(f"Installation timed out, trying next recovery strategy: {error_msg}", device_ip, "UPDATE")
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
+                continue
             elif "offline" in error_msg.lower() or "not connected" in error_msg.lower() or "Cannot connect" in error_msg:
                 # Device connectivity error - wait and retry with next strategy
                 log(f"Device appears offline, waiting before next attempt: {error_msg}", device_ip, "UPDATE")
