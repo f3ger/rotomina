@@ -4989,10 +4989,11 @@ async def get_status_data():
         # Check if device is in update process
         in_update = False
         update_info = ""
-        if ip in devices_in_update and devices_in_update[ip]["in_update"]:
+        formatted_ip = format_device_id(ip)
+        if formatted_ip in devices_in_update and devices_in_update[formatted_ip]["in_update"]:
             in_update = True
-            update_type = devices_in_update[ip]["update_type"]
-            update_duration = int(time.time() - devices_in_update[ip]["started_at"])
+            update_type = devices_in_update[formatted_ip]["update_type"]
+            update_duration = int(time.time() - devices_in_update[formatted_ip]["started_at"])
             update_info = f"{update_type} ({update_duration}s)"
         
         devices.append({
@@ -5281,10 +5282,11 @@ async def status_page(request: Request):
         # Check if device is in update process
         in_update = False
         update_info = ""
-        if ip in devices_in_update and devices_in_update[ip]["in_update"]:
+        formatted_ip = format_device_id(ip)
+        if formatted_ip in devices_in_update and devices_in_update[formatted_ip]["in_update"]:
             in_update = True
-            update_type = devices_in_update[ip]["update_type"]
-            update_duration = int(time.time() - devices_in_update[ip]["started_at"])
+            update_type = devices_in_update[formatted_ip]["update_type"]
+            update_duration = int(time.time() - devices_in_update[formatted_ip]["started_at"])
             update_info = f"{update_type} ({update_duration}s)"
         
         mem_free_value = status.get("mem_free", 0)
