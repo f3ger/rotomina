@@ -142,7 +142,7 @@
                     </div>
 
                     <div class="dropdown relative"
-                        x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
+                        x-data="{ open: false, versions: [], async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all.filter(v => v.module_type === 'fork').slice(0, 2) : []; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; } }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
                         <button @click="open = !open"
                             class="w-full justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 inline-flex items-center"
                             type="button">
@@ -156,18 +156,8 @@
                         <div x-show="open" @click.away="open = false"
                             class="origin-top-left absolute left-0 mt-2 w-72 max-w-[92vw] rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-2 px-2">
-                                <div class="flex border-b border-gray-700 mb-2 pb-2">
-                                    <button @click="moduleType = 'all'" class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                        :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All</button>
-                                    <button @click="moduleType = 'fork'"
-                                        class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                        :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
-                                    <button @click="moduleType = 'fix'" class="px-3 py-1 text-xs rounded-md flex-1"
-                                        :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
-                                </div>
-
                                 <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
-                                    <template x-for="version in filteredVersions()"
+                                    <template x-for="version in versions"
                                         :key="`${version.module_type}-${version.version}`">
                                         <button type="button"
                                             @click="updateDeviceModule(device.ip, version.version, version.module_type)"
@@ -178,16 +168,13 @@
                                                     <span class="text-xs text-gray-500 ml-1"
                                                         x-text="formatDate(version.published_at)"></span>
                                                 </div>
-                                                <span class="px-1.5 py-0.5 text-xs rounded"
-                                                    :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'"
-                                                    x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                                <span class="px-1.5 py-0.5 text-xs rounded bg-blue-900/40 text-blue-300 border border-blue-800">Fork</span>
                                             </div>
                                         </button>
                                     </template>
-                                    <div x-show="filteredVersions().length === 0"
+                                    <div x-show="versions.length === 0"
                                         class="px-4 py-2 text-sm text-gray-500 text-center">
-                                        <span x-show="versions.length === 0">Loading versions...</span>
-                                        <span x-show="versions.length > 0">No versions found</span>
+                                        Loading versions...
                                     </div>
                                 </div>
                             </div>
@@ -340,19 +327,6 @@
                             </span>
                         </th>
                         <th scope="col"
-                            class="hidden xl:table-cell px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer align-top"
-                            @click="sortTable('token')">
-                            Token
-                            <span class="inline-block ml-1"
-                                :class="{ 'rotate-180': sortConfig.direction === 'desc' && sortConfig.key === 'token' }">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                                    stroke="currentColor" x-show="sortConfig.key === 'token'">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M5 15l7-7 7 7" />
-                                </svg>
-                            </span>
-                        </th>
-                        <th scope="col"
                             class="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider align-top">
                             Actions
                         </th>
@@ -373,13 +347,13 @@
                                 <div class="relative group">
                                     <template x-if="device.status">
                                         <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                         </svg>
                                     </template>
                                     <template x-if="!device.status">
                                         <div>
                                             <svg class="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                             </svg>
                                             <template x-if="device.adb_error">
                                                 <span
@@ -398,12 +372,12 @@
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 <template x-if="device.is_alive">
                                     <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
                                 </template>
                                 <template x-if="!device.is_alive">
                                     <svg class="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
                                 </template>
                             </td>
@@ -432,29 +406,6 @@
                                 x-text="device.module"></td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
                                 x-text="formatMemory(device.mem_free)"></td>
-                            <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300">
-                                {% if config.device_token %}
-                                {% if token_valid %}
-                                <span class="inline-flex items-center text-green-400" title="Valid">
-                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
-                                    </svg>
-                                </span>
-                                {% else %}
-                                <span class="inline-flex items-center text-red-400" title="Invalid">
-                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                                    </svg>
-                                </span>
-                                {% endif %}
-                                {% else %}
-                                <span class="inline-flex items-center text-gray-400" title="Not Set">
-                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/>
-                                    </svg>
-                                </span>
-                                {% endif %}
-                            </td>
                             <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium flex flex-wrap gap-2">
                                 <div class="dropdown" x-data="{ open: false }">
                                     <button @click="open = !open"
@@ -482,7 +433,7 @@
 
                                 <!-- Module Dropdown -->
                                 <div class="dropdown"
-                                    x-data="{ open: false, versions: [], moduleType: 'all', async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all : []; this.moduleType = (data && data.preferred) ? data.preferred : 'all'; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; this.moduleType = 'all'; } }, filteredVersions() { if (!this.versions) return []; if (this.moduleType === 'all') return this.versions.slice(0, 10); return this.versions.filter(v => v.module_type === this.moduleType).slice(0, 10); }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
+                                    x-data="{ open: false, versions: [], async init() { try { const resp = await fetch('/api/all-module-versions'); const data = await resp.json(); this.versions = (data && data.all) ? data.all.filter(v => v.module_type === 'fork').slice(0, 2) : []; } catch (e) { console.error('Error fetching module versions:', e); this.versions = []; } }, formatDate(dateString) { try { const d = new Date(dateString); return d.toLocaleDateString(); } catch (e) { return dateString; } } }">
                                     <button @click="open = !open"
                                         class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100 rounded-md text-xs border border-gray-600 flex items-center"
                                         type="button">
@@ -496,21 +447,8 @@
                                     <div x-show="open" @click.away="open = false"
                                         class="origin-top-right absolute mt-2 w-72 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-2 px-2">
-                                            <div class="flex border-b border-gray-700 mb-2 pb-2">
-                                                <button @click="moduleType = 'all'"
-                                                    class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                                    :class="moduleType === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">All
-                                                    Modules</button>
-                                                <button @click="moduleType = 'fork'"
-                                                    class="px-3 py-1 text-xs rounded-md mr-1 flex-1"
-                                                    :class="moduleType === 'fork' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fork</button>
-                                                <button @click="moduleType = 'fix'"
-                                                    class="px-3 py-1 text-xs rounded-md flex-1"
-                                                    :class="moduleType === 'fix' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'">Fix</button>
-                                            </div>
-
                                             <div class="max-h-60 overflow-y-auto divide-y divide-gray-700">
-                                                <template x-for="version in filteredVersions()"
+                                                <template x-for="version in versions"
                                                     :key="`${version.module_type}-${version.version}`">
                                                     <button type="button"
                                                         @click="updateDeviceModule(device.ip, version.version, version.module_type)"
@@ -522,16 +460,13 @@
                                                                 <span class="text-xs text-gray-500 ml-1"
                                                                     x-text="formatDate(version.published_at)"></span>
                                                             </div>
-                                                            <span class="px-1.5 py-0.5 text-xs rounded"
-                                                                :class="version.module_type === 'fork' ? 'bg-blue-900/40 text-blue-300 border border-blue-800' : 'bg-yellow-900/40 text-yellow-300 border border-yellow-800'"
-                                                                x-text="version.module_type === 'fork' ? 'Fork' : 'Fix'"></span>
+                                                            <span class="px-1.5 py-0.5 text-xs rounded bg-blue-900/40 text-blue-300 border border-blue-800">Fork</span>
                                                         </div>
                                                     </button>
                                                 </template>
-                                                <div x-show="filteredVersions().length === 0"
+                                                <div x-show="versions.length === 0"
                                                     class="px-4 py-2 text-sm text-gray-500 text-center">
-                                                    <span x-show="versions.length === 0">Loading versions...</span>
-                                                    <span x-show="versions.length > 0">No versions found</span>
+                                                    Loading versions...
                                                 </div>
                                             </div>
                                         </div>
@@ -568,13 +503,52 @@
                     </svg>
                 </button>
             </div>
+            <!-- Global progress bar -->
             <div class="mb-4">
-                <div class="overflow-hidden h-2 text-xs flex rounded bg-gray-700">
-                    <div class="w-0 flex-none h-full flex justify-center bg-blue-500 transition-all duration-300 ease-out"
+                <div class="overflow-hidden h-3 rounded-full bg-gray-700">
+                    <div class="h-full rounded-full transition-all duration-300 ease-out"
+                        :class="updateProgress >= 100 ? 'bg-green-500' : 'bg-blue-500'"
                         :style="{ width: updateProgress + '%' }"></div>
                 </div>
+                <p class="text-xs text-gray-400 mt-1 text-right" x-text="Math.round(updateProgress) + '%'"></p>
             </div>
-            <p class="text-center text-gray-300">Please wait, this may take a few minutes...</p>
+            <!-- Device list -->
+            <div class="max-h-60 overflow-y-auto space-y-2">
+                <template x-for="device in sortedDevices" :key="'update-' + device.ip">
+                    <div class="flex items-center gap-3 px-3 py-2 rounded-md bg-gray-900/40">
+                        <!-- Status icon -->
+                        <div class="flex-none">
+                            <!-- Active: spinner -->
+                            <template x-if="device.in_update">
+                                <svg class="w-5 h-5 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                            </template>
+                            <!-- Done: green check circle -->
+                            <template x-if="!device.in_update && updatedDevices.includes(device.ip)">
+                                <svg class="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </template>
+                            <!-- Pending: empty circle -->
+                            <template x-if="!device.in_update && !updatedDevices.includes(device.ip)">
+                                <svg class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <circle cx="12" cy="12" r="9" stroke-width="2"/>
+                                </svg>
+                            </template>
+                        </div>
+                        <!-- Device info -->
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm text-gray-100 truncate" x-text="device.display_name"></div>
+                        </div>
+                        <!-- Update info -->
+                        <div class="flex-none">
+                            <span class="text-xs text-gray-400" x-text="device.update_info || ''"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
     </div>
 </div>
@@ -595,6 +569,8 @@
             isRefreshing: false,
             showUpdateModal: false,
             updateProgress: 0,
+            updatedDevices: [],
+            _previouslyUpdating: [],
 
             sortConfig: {
                 key: 'name',
@@ -784,10 +760,21 @@
                 if (data.update_in_progress) {
                     this.showUpdateModal = true;
                     this.updateProgress = data.update_progress;
+
+                    // Track devices that finished updating
+                    const currentlyUpdating = this.devices.filter(d => d.in_update).map(d => d.ip);
+                    for (const ip of this._previouslyUpdating) {
+                        if (!currentlyUpdating.includes(ip) && !this.updatedDevices.includes(ip)) {
+                            this.updatedDevices.push(ip);
+                        }
+                    }
+                    this._previouslyUpdating = currentlyUpdating;
                 } else {
                     // Hide modal when update is complete (regardless of progress value)
                     setTimeout(() => {
                         this.showUpdateModal = false;
+                        this.updatedDevices = [];
+                        this._previouslyUpdating = [];
                     }, 1000);
                 }
             },
@@ -942,13 +929,12 @@
                     });
             },
 
-            // Filter versions based on selected module type
+            // Filter versions - fork only, max 2
             filteredVersions() {
                 if (!this.versions) return [];
-                if (this.moduleType === 'all') return this.versions.slice(0, 10); // Limit to top 10
                 return this.versions
-                    .filter(v => v.module_type === this.moduleType)
-                    .slice(0, 10); // Limit to top 10
+                    .filter(v => v.module_type === 'fork')
+                    .slice(0, 2);
             },
 
             // Legacy method - kept for compatibility
