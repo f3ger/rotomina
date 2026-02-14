@@ -2378,20 +2378,24 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                 )
                 
             update_progress(90)
-            
-            # Clear caches
+
+            # Clear update status BEFORE refreshing version info,
+            # otherwise get_version_info() skips refresh for devices marked as in_update
+            clear_device_update_status(device_ip)
+
+            # Clear caches and refresh version
             device_status_cache.clear()
             version_manager.mark_for_refresh(device_ip)
-            
+
             update_progress(100)
-            
+
             # Update UI
             status_data = await get_status_data()
             await ws_manager.broadcast(status_data)
-            
+
             await asyncio.sleep(2)
             return start_result
-        
+
         # This point should not be reached if everything worked correctly
         clear_device_update_status(device_ip)
         return False
@@ -4400,7 +4404,11 @@ async def install_module_with_progress(device_ip: str, module_path=None, module_
         
         if "disabled" in module_enabled.stdout:
             log("Warning: Module is installed but appears to be disabled", device_id, "UPDATE")
-        
+
+        # Clear update status BEFORE refreshing version info,
+        # otherwise get_version_info() skips refresh for devices marked as in_update
+        clear_device_update_status(device_ip)
+
         device_status_cache.clear()
         version_manager.mark_for_refresh(device_id)
         log("FORK update successfully completed", device_id, "UPDATE")
