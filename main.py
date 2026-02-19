@@ -2060,9 +2060,9 @@ async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[b
         log("Multiple APKs installed successfully", device_id, "UPDATE")
         return True, "SUCCESS"
             
-    except subprocess.TimeoutExpired as e:
-        log(f"APK installation timed out: {str(e)}", device_id, "ERROR")
-        return False, f"TIMEOUT: {str(e)}"
+    except subprocess.TimeoutExpired:
+        log(f"APK installation timed out after 300 seconds", device_id, "ERROR")
+        return False, "TIMEOUT: install-multiple timed out after 300 seconds"
     except Exception as e:
         log(f"APK installation error: {str(e)}", device_id, "ERROR")
         return False, f"EXCEPTION: {str(e)}"
@@ -2173,9 +2173,10 @@ async def reboot_and_wait(device_id: str) -> bool:
         log("Rebooting device to reclaim storage", device_id, "UPDATE")
         adb_pool.execute_command(device_id, ["adb", "reboot"])
 
-        # Invalidate ADB cache so reconnect checks are fresh
-        adb_pool.connected_devices.discard(device_id)
-        adb_pool.last_command_time.pop(device_id, None)
+        # Invalidate ADB connection cache so ensure_connected actually checks
+        with adb_pool.connection_lock:
+            adb_pool.connected_devices.discard(device_id)
+            adb_pool.last_command_time.pop(device_id, None)
 
         # Wait for device to come back online (max 5 minutes)
         for i in range(30):
@@ -2232,27 +2233,29 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         device_details = get_device_details(device_ip)
         device_name = device_details.get("display_name", device_ip.split(":")[0])
 
-        # Wait for device to be online before starting (e.g. after reboot)
-        if not adb_pool.ensure_connected(device_ip):
-            log("Device not online, waiting up to 3 minutes", device_ip, "UPDATE")
+        # Wait for device to be online before attempting installation (max 3 minutes)
+        device_ip_formatted = format_device_id(device_ip)
+        if not adb_pool.ensure_connected(device_ip_formatted):
+            log("Device not online, waiting for it to come online before installation", device_ip, "UPDATE")
             device_online = False
-            for _ in range(18):  # 18 * 10s = 180s = 3 min
+            for i in range(18):  # max 3 minutes (18 * 10s)
                 await asyncio.sleep(10)
-                adb_pool.connected_devices.discard(device_ip)
-                adb_pool.last_command_time.pop(device_ip, None)
-                if adb_pool.ensure_connected(device_ip):
-                    device_online = True
-                    break
+                try:
+                    if adb_pool.ensure_connected(device_ip_formatted):
+                        log(f"Device came online after {(i + 1) * 10}s", device_ip, "UPDATE")
+                        device_online = True
+                        break
+                except Exception:
+                    continue
             if not device_online:
-                log("Device did not come online within 3 minutes", device_ip, "ERROR")
+                log("Device did not come online within 3 minutes, aborting installation", device_ip, "ERROR")
                 await send_discord_notification(
-                    message=f"Device **{device_name}** ({device_ip}) is offline. Installation aborted.",
-                    title="Installation Failed - Device Offline",
+                    message=f"Installation aborted for **{device_name}** ({device_ip}). Device did not come online within 3 minutes.",
+                    title="Installation Aborted - Device Offline",
                     color=DISCORD_COLOR_RED
                 )
                 clear_device_update_status(device_ip)
                 return False
-            log("Device is now online, proceeding with installation", device_ip, "UPDATE")
 
         # Find APK files
         apk_files = list(extract_dir.glob("*.apk"))
@@ -2328,18 +2331,23 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             if installation_success:
                 log(f"{strategy_name.title()} installation successful", device_ip, "UPDATE")
                 break
-            elif "TIMEOUT:" in error_msg or "timed out" in error_msg.lower():
-                # Timeout error - device may be stuck, invalidate cache and retry
-                log(f"Installation timed out, invalidating cache and retrying", device_ip, "UPDATE")
-                adb_pool.connected_devices.discard(device_ip)
-                adb_pool.last_command_time.pop(device_ip, None)
+            elif error_msg.startswith("TIMEOUT:") or "timed out" in error_msg.lower():
+                # ADB command timed out - device is stuck, continue to next strategy (reboot)
+                log(f"Installation timed out, trying next recovery strategy: {error_msg}", device_ip, "UPDATE")
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
                 continue
             elif "offline" in error_msg.lower() or "not connected" in error_msg.lower() or "Cannot connect" in error_msg:
-                # Device went offline - wait briefly, invalidate cache, and retry
-                log(f"Device appears offline, waiting 15s before retry", device_ip, "UPDATE")
+                # Device connectivity error - wait and retry with next strategy
+                log(f"Device appears offline, waiting before next attempt: {error_msg}", device_ip, "UPDATE")
                 await asyncio.sleep(15)
-                adb_pool.connected_devices.discard(device_ip)
-                adb_pool.last_command_time.pop(device_ip, None)
+                # Invalidate ADB cache so next attempt does a real check
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
                 continue
             elif error_msg != "INSUFFICIENT_STORAGE":
                 # Non-storage error, don't continue with other strategies
