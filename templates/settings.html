@@ -335,22 +335,57 @@
                     </div>
                 </div>
 
-                <!-- Discord Settings -->
-                <div class="pt-5">
+                <!-- Discord Bot Settings -->
+                <div class="pt-2">
                     <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6">
                         <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
-                            <h2 class="text-xl font-medium text-white">Discord Webhook Settings</h2>
+                            <h2 class="text-xl font-medium text-white">Discord Bot</h2>
                         </div>
-                        <div class="p-6">
+                        <div class="p-6 space-y-4">
                             <div>
-                                <label for="discord_webhook_url"
-                                    class="block text-sm font-medium text-gray-300 mb-1">Discord Webhook URL</label>
-                                <input type="text" id="discord_webhook_url" name="discord_webhook_url"
+                                <label for="discord_bot_token"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Bot Token</label>
+                                <input type="password" id="discord_bot_token" name="discord_bot_token"
                                     class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                                    value="{{ config.discord_webhook_url }}"
-                                    placeholder="https://discord.com/api/webhooks/...">
-                                <p class="mt-2 text-sm text-gray-400">Enter the Discord webhook URL to receive status
-                                    notifications. Leave empty to disable notifications.</p>
+                                    value="{{ config.discord_bot_token }}"
+                                    placeholder="Bot token from the Discord Developer Portal">
+                                <p class="mt-1 text-sm text-gray-400">Bot token from the <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leave empty to disable the bot.</p>
+                            </div>
+                            <div>
+                                <label for="discord_bot_channel_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Allowed Command Channel (ID)</label>
+                                <input type="text" id="discord_bot_channel_id" name="discord_bot_channel_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_channel_id }}"
+                                    placeholder="e.g. 1234567890123456789">
+                                <p class="mt-1 text-sm text-gray-400">Commands are only accepted in this channel. Leave empty to allow any channel.</p>
+                            </div>
+                            <div>
+                                <label for="discord_bot_role_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Allowed Role (ID)</label>
+                                <input type="text" id="discord_bot_role_id" name="discord_bot_role_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_role_id }}"
+                                    placeholder="e.g. 9876543210987654321">
+                                <p class="mt-1 text-sm text-gray-400">Only users with this role can execute commands. Leave empty to allow all users.</p>
+                            </div>
+                            <div>
+                                <label for="discord_bot_notify_channel_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Notification Channel (ID)</label>
+                                <input type="text" id="discord_bot_notify_channel_id" name="discord_bot_notify_channel_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_notify_channel_id }}"
+                                    placeholder="e.g. 1234567890123456789">
+                                <p class="mt-1 text-sm text-gray-400">The bot posts status notifications here (device offline, updates, …). Can be the same as the command channel. Leave empty to disable notifications.</p>
+                            </div>
+                            <div class="bg-gray-800 rounded-md p-3 text-sm text-gray-400">
+                                <p class="font-medium text-gray-300 mb-1">Available Slash Commands:</p>
+                                <ul class="list-disc list-inside space-y-1">
+                                    <li><code class="text-blue-300">/update_pogo</code> – Update PoGo on all devices</li>
+                                    <li><code class="text-blue-300">/status</code> – Show device status as an embed</li>
+                                    <li><code class="text-blue-300">/restart</code> – Restart PoGo/MITM on all devices</li>
+                                </ul>
+                                <p class="mt-2 text-yellow-400">Note: A server restart is required after changing the bot token.</p>
                             </div>
                         </div>
                     </div>

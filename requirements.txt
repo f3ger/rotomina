@@ -9,3 +9,4 @@ starlette>=0.27.0
 aiofiles>=0.8.0
 itsdangerous>=2.0.0
 websockets>=11.0.0
+discord.py>=2.3.0

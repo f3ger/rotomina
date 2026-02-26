@@ -21,6 +21,13 @@ from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from uuid import uuid4
 
+try:
+    import discord
+    from discord import app_commands
+    DISCORD_BOT_AVAILABLE = True
+except ImportError:
+    DISCORD_BOT_AVAILABLE = False
+
 from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -656,6 +663,10 @@ def load_config():
         config.setdefault("pif_auto_update_enabled", True)
         config.setdefault("pogo_auto_update_enabled", True)
         config.setdefault("device_token", "")
+        config.setdefault("discord_bot_token", "")
+        config.setdefault("discord_bot_channel_id", "")
+        config.setdefault("discord_bot_role_id", "")
+        config.setdefault("discord_bot_notify_channel_id", "")
         return config
 
 def needs_setup() -> bool:
@@ -707,44 +718,32 @@ def ttl_cache(ttl: int):
         return wrapper
     return decorator
 
-# Discord Webhook Functions
+# Discord Notification Function (via Bot)
 async def send_discord_notification(message: str, title: str = None, color: int = 0x5865F2):
-    """Sends a notification to the Discord webhook, if configured"""
-    config = load_config()
-    webhook_url = config.get("discord_webhook_url")
-    
-    if not webhook_url:
+    """Sends a notification via the Discord bot to the configured notify channel."""
+    if not DISCORD_BOT_AVAILABLE or _discord_bot_client is None:
         return False
-    
+    cfg = load_config()
+    channel_id = cfg.get("discord_bot_notify_channel_id", "").strip()
+    if not channel_id:
+        return False
     try:
-        embed = {
-            "title": title or "Rotomina Notification",
-            "description": message,
-            "color": color,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "footer": {
-                "text": "Rotomina"
-            }
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                webhook_url,
-                json={
-                    "embeds": [embed]
-                },
-                timeout=10
-            )
-            
-            if response.status_code >= 200 and response.status_code < 300:
-                log(f"Discord notification sent: {message}", None, "API")
-                return True
-            else:
-                log(f"Discord webhook error: {response.status_code}", None, "ERROR")
-                return False
-                
+        channel = _discord_bot_client.get_channel(int(channel_id))
+        if channel is None:
+            log(f"Discord notify channel {channel_id} not found", None, "ERROR")
+            return False
+        embed = discord.Embed(
+            title=title or "Rotomina Notification",
+            description=message,
+            color=color,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        embed.set_footer(text="Rotomina")
+        await channel.send(embed=embed)
+        log(f"Discord notification sent: {message}", None, "API")
+        return True
     except Exception as e:
-        log(f"Error sending Discord notification: {str(e)}", None, "ERROR")
+        log(f"Discord notification error: {e}", None, "ERROR")
         return False
 
 # Discord Message Color Constants
@@ -752,6 +751,136 @@ DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
 DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
 DISCORD_COLOR_BLUE = 0x3498DB    # Info/Update
 DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
+
+# ─────────────────────────── Discord Bot ───────────────────────────
+
+_discord_bot_client: "discord.Client | None" = None
+
+
+async def start_discord_bot():
+    """Start the Discord bot if a token is configured. Runs as a background task."""
+    global _discord_bot_client
+
+    if not DISCORD_BOT_AVAILABLE:
+        log("discord.py not installed – bot disabled. Run: pip install discord.py>=2.3.0", None, "DISCORD")
+        return
+
+    config = load_config()
+    token = config.get("discord_bot_token", "").strip()
+    if not token:
+        return
+
+    intents = discord.Intents.default()
+    client = discord.Client(intents=intents)
+    tree = app_commands.CommandTree(client)
+    _discord_bot_client = client
+
+    def _check_permissions(interaction: discord.Interaction) -> bool:
+        """Returns True if the interaction satisfies the configured channel/role restrictions."""
+        cfg = load_config()
+        allowed_channel = cfg.get("discord_bot_channel_id", "").strip()
+        allowed_role = cfg.get("discord_bot_role_id", "").strip()
+        if allowed_channel and str(interaction.channel_id) != allowed_channel:
+            return False
+        if allowed_role:
+            role_ids = [str(r.id) for r in getattr(interaction.user, "roles", [])]
+            if allowed_role not in role_ids:
+                return False
+        return True
+
+    @tree.command(name="update_pogo", description="Update PoGo on all devices")
+    async def _cmd_update_pogo(interaction: discord.Interaction):
+        if not _check_permissions(interaction):
+            await interaction.response.send_message("Not authorized.", ephemeral=True)
+            return
+        if update_in_progress:
+            await interaction.response.send_message("An update is already in progress.", ephemeral=True)
+            return
+        await interaction.response.send_message("⏳ Starting PoGo update…")
+
+        async def _run():
+            try:
+                cfg = load_config()
+                device_ips = [d["ip"] for d in cfg.get("devices", [])]
+                versions = get_available_versions()
+                if not versions:
+                    await interaction.followup.send("❌ Error: No versions available.")
+                    return
+                entry = versions["latest"]
+                apk_file = APK_DIR / entry["filename"]
+                if not apk_file.exists():
+                    apk_file = download_apk(entry)
+                extract_dir = EXTRACT_DIR / entry["version"]
+                unzip_apk(apk_file, extract_dir)
+                await perform_installations(device_ips, extract_dir)
+                await interaction.followup.send(
+                    f"✅ PoGo {entry['version']} installed on {len(device_ips)} device(s)."
+                )
+            except Exception as e:
+                await interaction.followup.send(f"❌ Update failed: {e}")
+
+        asyncio.create_task(_run())
+
+    @tree.command(name="status", description="Show device status")
+    async def _cmd_status(interaction: discord.Interaction):
+        if not _check_permissions(interaction):
+            await interaction.response.send_message("Not authorized.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            data = await get_status_data()
+            embed = discord.Embed(title="Rotomina – Device Status", color=DISCORD_COLOR_BLUE)
+            for dev in data.get("devices", []):
+                alive = "🟢" if dev.get("is_alive") else "🔴"
+                adb = "✅" if dev.get("status") else "❌"
+                in_upd = " ⏳" if dev.get("in_update") else ""
+                name = dev.get("name") or dev.get("ip", "?")
+                pogo_ver = dev.get("pogo_version", "?")
+                mem = dev.get("mem_free", "?")
+                embed.add_field(
+                    name=f"{alive} {name}{in_upd}",
+                    value=f"ADB: {adb} | PoGo: `{pogo_ver}` | Free RAM: {mem} MB",
+                    inline=False,
+                )
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to fetch status: {e}")
+
+    @tree.command(name="restart", description="Restart PoGo/MITM on all devices")
+    async def _cmd_restart(interaction: discord.Interaction):
+        if not _check_permissions(interaction):
+            await interaction.response.send_message("Not authorized.", ephemeral=True)
+            return
+        await interaction.response.send_message("⏳ Initiating restart…")
+
+        async def _run():
+            try:
+                cfg = load_config()
+                devices = cfg.get("devices", [])
+                for dev in devices:
+                    ip = dev["ip"]
+                    control_enabled = dev.get("control_enabled", False)
+                    await optimized_app_start(ip, control_enabled)
+                await interaction.followup.send(f"✅ Restart triggered on {len(devices)} device(s).")
+            except Exception as e:
+                await interaction.followup.send(f"❌ Restart failed: {e}")
+
+        asyncio.create_task(_run())
+
+    @client.event
+    async def on_ready():
+        await tree.sync()
+        log(f"Discord Bot logged in as {client.user}", None, "DISCORD")
+
+    try:
+        await client.start(token)
+    except discord.LoginFailure:
+        log("Discord Bot: Invalid token – bot not started.", None, "DISCORD")
+    except Exception as e:
+        log(f"Discord Bot error: {e}", None, "DISCORD")
+
+
+# ────────────────────────────────────────────────────────────────────
 
 # Centralized timeout configuration
 class TimeoutConfig:
@@ -5110,6 +5239,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(optimized_module_update_task())
     asyncio.create_task(optimized_pogo_update_task())
     asyncio.create_task(optimized_device_monitoring())
+    asyncio.create_task(start_discord_bot())
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -5357,7 +5487,10 @@ def settings_save(
     rotomApiUrl: str = Form(""),
     rotomApiUser: str = Form(""),
     rotomApiPass: str = Form(""),
-    discord_webhook_url: str = Form("")
+    discord_bot_token: str = Form(""),
+    discord_bot_channel_id: str = Form(""),
+    discord_bot_role_id: str = Form(""),
+    discord_bot_notify_channel_id: str = Form(""),
 ):
     if redirect := require_login(request):
         return redirect
@@ -5367,16 +5500,15 @@ def settings_save(
         "rotomApiUrl": rotomApiUrl,
         "rotomApiUser": rotomApiUser,
         "rotomApiPass": rotomApiPass,
-        "discord_webhook_url": discord_webhook_url
+        "discord_bot_token": discord_bot_token,
+        "discord_bot_channel_id": discord_bot_channel_id,
+        "discord_bot_role_id": discord_bot_role_id,
+        "discord_bot_notify_channel_id": discord_bot_notify_channel_id,
     })
-    
-    log(f"Saving settings with discord_webhook_url", None, "CONFIG")
-    
+
     save_config(config)
-    
-    test_config = load_config()
     log(f"Settings saved successfully", None, "CONFIG")
-    
+
     return RedirectResponse(url="/settings", status_code=302)
 
 @app.post("/settings/save-device-token", response_class=HTMLResponse)
