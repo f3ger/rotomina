@@ -20,7 +20,7 @@ Rotomina is built with a modern, scalable architecture:
 - 📱 **Device Management**: Monitor and control multiple Android devices via ADB
 - 🔄 **Automatic Updates**: Keep Pokemon GO, MITM apps, and PlayIntegrityFix up-to-date
 - � **Real-time Monitoring**: WebSocket-based live status updates with fallback AJAX polling
-- � **Discord Notifications**: Configurable alerts for device status and updates
+- � **Discord Bot**: Full two-way control via slash commands and status notifications in Discord
 - 🛠️ **Remote Management**: Install apps, modules, and restart services remotely
 - 🔐 **Secure Authentication**: User authentication with configurable credentials
 - 🌐 **Responsive Design**: Mobile-friendly interface that works on all devices
@@ -121,7 +121,10 @@ Add devices via the web interface using:
 - `memory_threshold`: Memory limit in MB before automatic restart
 - `pogo_auto_update_enabled`: Auto-update Pokemon GO when new versions available
 - `pif_auto_update_enabled`: Auto-update PlayIntegrityFix module
-- `discord_webhook_url`: Discord webhook for notifications
+- `discord_bot_token`: Bot token from the Discord Developer Portal
+- `discord_bot_channel_id`: Channel ID where slash commands are accepted (optional)
+- `discord_bot_role_id`: Role ID required to execute bot commands (optional)
+- `discord_bot_notify_channel_id`: Channel ID for status notifications (optional)
 - `device_token`: Authentication token for external API access
 
 ## 🎯 Usage
@@ -154,19 +157,69 @@ The Status page provides comprehensive device information:
 - `POST /devices/remove`: Remove device
 - `WebSocket /ws/status`: Real-time status updates
 
-## 🔔 Discord Notifications
+## 🤖 Discord Bot
 
-Configure Discord notifications by adding a webhook URL in Settings to receive alerts for:
-- Device offline/online status changes
-- Memory threshold breaches and automatic restarts
-- Update completion and failures
-- Installation progress and results
-- System errors and warnings
+Rotomina includes a Discord bot for two-way control: trigger updates and restarts via slash commands, and receive status notifications — all from within your Discord server.
 
-### Notification Types
-- **INFO**: General status updates
-- **WARNING**: Memory thresholds, connection issues
-- **ERROR**: Failed updates, critical system errors
+### Step 1 — Create the Bot
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**
+2. Give it a name (e.g. `Rotomina`) and confirm
+3. Open the **Bot** tab → click **Add Bot** → confirm
+4. Under **Token** click **Reset Token**, copy it and save it somewhere safe
+5. Privileged Gateway Intents are **not required** — leave all toggles off
+
+### Step 2 — Invite the Bot to Your Server
+
+1. Open the **OAuth2** tab → **URL Generator**
+2. Select scopes: `bot` and `applications.commands`
+3. Select bot permissions: **Send Messages**, **Embed Links**, **View Channels**
+4. Copy the generated URL, open it in a browser, and select your server
+
+### Step 3 — Get Channel and Role IDs
+
+Enable **Developer Mode** in Discord:
+> User Settings → Advanced → Developer Mode → On
+
+- **Channel ID**: Right-click any channel → *Copy Channel ID*
+- **Role ID**: Server Settings → Roles → right-click the role → *Copy Role ID*
+
+### Step 4 — Configure Rotomina
+
+Open **Settings** in the Rotomina web UI and fill in the **Discord Bot** section:
+
+| Field | Description |
+|-------|-------------|
+| **Bot Token** | The token from Step 1 |
+| **Allowed Command Channel** | Channel ID where slash commands are accepted. Leave empty to allow any channel. |
+| **Allowed Role** | Role ID required to use bot commands. Leave empty to allow all users. |
+| **Notification Channel** | Channel ID where the bot posts status alerts. Leave empty to disable notifications. |
+
+> **Note:** A server restart is required after changing the bot token.
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/update_pogo` | Starts a PoGo update on all configured devices. Reports back when done. |
+| `/status` | Shows all devices as a rich embed with ADB status, PoGo version, and free RAM. |
+| `/restart` | Restarts PoGo/MITM on all devices. Reports back when done. |
+
+> **Note:** Slash commands are synced globally on bot startup. It can take **up to 1 hour** for them to appear in Discord after the first start.
+
+### Notification Events
+
+The bot posts embedded alerts to the configured notification channel for:
+
+| Event | Color |
+|-------|-------|
+| Device went offline | 🔴 Red |
+| Device back online | 🟢 Green |
+| Low memory — app restarted | 🟠 Orange |
+| New version downloaded | 🔵 Blue |
+| Update installed successfully | 🟢 Green |
+| Installation failed / retry | 🔴 / 🟠 |
+| Invalid device token | 🔴 Red |
 
 ## 🔄 Updating
 
@@ -218,6 +271,12 @@ docker-compose up -d
   - Verify sufficient storage space
   - Ensure device has proper permissions
   - Review update logs for specific error messages
+
+#### Discord Bot Not Responding
+- **Commands not showing up**: Global slash command sync takes up to 1 hour after the first start. Wait and try again.
+- **"Not authorized" response**: Verify you are posting in the configured command channel and that your account has the required role set in Settings.
+- **Bot appears offline**: The bot token in Settings may be wrong or expired — reset it in the Developer Portal, update Settings, and restart the server.
+- **No notifications arriving**: Make sure the Notification Channel ID is set in Settings and that the bot has **Send Messages** and **Embed Links** permissions in that channel.
 
 ### Performance Optimization
 - **Connection Pooling**: Automatically manages ADB connections efficiently
