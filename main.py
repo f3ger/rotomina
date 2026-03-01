@@ -758,6 +758,30 @@ DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
 # ─────────────────────────── Discord Bot ───────────────────────────
 
 _discord_bot_client: "discord.Client | None" = None
+_discord_status_message_id: "int | None" = None
+_discord_recent_events: list = []  # List of (timestamp, message) tuples, max 10
+
+
+def add_discord_event(message: str):
+    """Add an event to the recent events list for the live status embed."""
+    _discord_recent_events.insert(0, (time.time(), message))
+    del _discord_recent_events[10:]  # Keep last 10
+
+
+def _format_relative_time(ts: float) -> str:
+    """Format a timestamp as relative time (e.g. '2 min ago')."""
+    diff = int(time.time() - ts)
+    if diff < 60:
+        return "just now"
+    elif diff < 3600:
+        m = diff // 60
+        return f"{m} min ago"
+    elif diff < 86400:
+        h = diff // 3600
+        return f"{h}h ago"
+    else:
+        d = diff // 86400
+        return f"{d}d ago"
 
 
 async def start_discord_bot():
@@ -824,31 +848,6 @@ async def start_discord_bot():
 
         asyncio.create_task(_run())
 
-    @tree.command(name="status", description="Show device status")
-    async def _cmd_status(interaction: discord.Interaction):
-        if not _check_permissions(interaction):
-            await interaction.response.send_message("Not authorized.", ephemeral=True)
-            return
-        await interaction.response.defer()
-        try:
-            data = await get_status_data()
-            embed = discord.Embed(title="Rotomina – Device Status", color=DISCORD_COLOR_BLUE)
-            for dev in data.get("devices", []):
-                alive = "🟢" if dev.get("is_alive") else "🔴"
-                adb = "✅" if dev.get("status") else "❌"
-                in_upd = " ⏳" if dev.get("in_update") else ""
-                name = dev.get("display_name") or dev.get("ip", "?")
-                pogo_ver = dev.get("pogo", "N/A")
-                mitm_ver = dev.get("mitm", "N/A")
-                embed.add_field(
-                    name=f"{alive} {name}{in_upd}",
-                    value=f"ADB: {adb} | PoGo: `{pogo_ver}` | MITM: `{mitm_ver}`",
-                    inline=False,
-                )
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Failed to fetch status: {e}")
-
     @tree.command(name="restart", description="Restart PoGo/MITM on all devices")
     async def _cmd_restart(interaction: discord.Interaction):
         if not _check_permissions(interaction):
@@ -874,6 +873,7 @@ async def start_discord_bot():
     async def on_ready():
         await tree.sync()
         log(f"Discord Bot logged in as {client.user}", None, "DISCORD")
+        await update_discord_status_embed()
 
     try:
         await client.start(token)
@@ -897,60 +897,107 @@ class TimeoutConfig:
     HTTP = 15      # HTTP requests
     ADB_KEYGEN = 10 # ADB key generation
 
-# Helper functions for specific notifications
+# ── Live Status Embed ──
+
+async def update_discord_status_embed():
+    """Update or create the persistent status embed in the notification channel."""
+    global _discord_status_message_id
+    if not DISCORD_BOT_AVAILABLE or _discord_bot_client is None:
+        return
+    if not _discord_bot_client.is_ready():
+        return
+
+    cfg = load_config()
+    channel_id = cfg.get("discord_bot_notify_channel_id", "").strip()
+    if not channel_id:
+        return
+
+    try:
+        channel = _discord_bot_client.get_channel(int(channel_id))
+        if channel is None:
+            return
+
+        # Build embed
+        data = await get_status_data()
+        devices = data.get("devices", [])
+        online = sum(1 for d in devices if d.get("is_alive"))
+        total = len(devices)
+
+        if online == total:
+            color = DISCORD_COLOR_GREEN
+        elif online == 0:
+            color = DISCORD_COLOR_RED
+        else:
+            color = DISCORD_COLOR_ORANGE
+
+        summary_icon = "✅" if online == total else ("🔴" if online == 0 else "⚠️")
+        lines = [f"**{summary_icon} {online}/{total} Devices Online**\n"]
+
+        for dev in devices:
+            alive = "🟢" if dev.get("is_alive") else "🔴"
+            adb = "✅" if dev.get("status") else "❌"
+            in_upd = " ⏳" if dev.get("in_update") else ""
+            name = dev.get("display_name") or dev.get("ip", "?")
+            pogo_ver = dev.get("pogo", "N/A")
+            mitm_ver = dev.get("mitm", "N/A")
+            lines.append(f"{alive} **{name}**{in_upd}")
+            lines.append(f"ADB {adb} · PoGo `{pogo_ver}` · MITM `{mitm_ver}`\n")
+
+        # Recent events section
+        if _discord_recent_events:
+            lines.append("📋 **Recent Events**")
+            for ts, event_msg in _discord_recent_events[:10]:
+                rel = _format_relative_time(ts)
+                lines.append(f"• {event_msg} ({rel})")
+
+        embed = discord.Embed(
+            title="Rotomina – Device Status",
+            description="\n".join(lines),
+            color=color,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        embed.set_footer(text="Rotomina · Live Status")
+
+        # Try to edit existing message
+        msg_id = _discord_status_message_id or cfg.get("discord_status_message_id")
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(int(msg_id))
+                await msg.edit(embed=embed)
+                return
+            except (discord.NotFound, discord.HTTPException):
+                pass  # Message deleted → send new one
+
+        # Send new message and persist ID
+        msg = await channel.send(embed=embed)
+        _discord_status_message_id = msg.id
+        cfg["discord_status_message_id"] = msg.id
+        save_config(cfg)
+    except Exception as e:
+        log(f"Discord status embed error: {e}", None, "ERROR")
+
+
+# Helper functions that add events and trigger embed update
 async def notify_device_offline(device_name: str, ip: str):
-    """Notifies when a device goes offline"""
-    message = f"Device **{device_name}** ({ip}) is offline."
-    await send_discord_notification(
-        message=message,
-        title="Device Offline",
-        color=DISCORD_COLOR_RED
-    )
+    add_discord_event(f"{device_name} went offline")
+    await update_discord_status_embed()
 
 async def notify_device_online(device_name: str, ip: str):
-    """Notifies when a device comes back online"""
-    message = f"Device **{device_name}** ({ip}) is back online and MITM was successfully started."
-    await send_discord_notification(
-        message=message,
-        title="Device Online",
-        color=DISCORD_COLOR_GREEN
-    )
+    add_discord_event(f"{device_name} is back online")
+    await update_discord_status_embed()
 
 async def notify_memory_restart(device_name: str, ip: str, memory: int, threshold: int):
-    """Notifies when a device is restarted due to low memory"""
-    memory_mb = memory / 1024
-    memory_formatted = f"{memory_mb:.2f} MB".replace(".", ",")
-    
-    threshold_formatted = f"{threshold} MB"
-    
-    message = (f"Device **{device_name}** ({ip}) is being restarted due to low memory.\n"
-              f"Available memory: **{memory_formatted}** (Threshold: {threshold_formatted})")
-    
-    await send_discord_notification(
-        message=message,
-        title="Low Memory - Restart",
-        color=DISCORD_COLOR_ORANGE
-    )
+    add_discord_event(f"{device_name} restarted — low memory")
+    await update_discord_status_embed()
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
-    """Notifies when an update has been installed on a device"""
-    message = f"**{update_type}** update (Version: {version}) has been installed on device **{device_name}** ({ip})."
-    
-    await send_discord_notification(
-        message=message,
-        title=f"{update_type} Update Installed",
-        color=DISCORD_COLOR_GREEN
-    )
+    add_discord_event(f"{update_type} {version} installed on {device_name}")
+    await update_discord_status_embed()
 
 async def notify_update_downloaded(update_type: str, version: str):
-    """Notifies when an update has been downloaded"""
-    message = f"New **{update_type}** version {version} has been downloaded and is ready for installation."
-    
-    await send_discord_notification(
-        message=message,
-        title=f"New {update_type} Version Available",
-        color=DISCORD_COLOR_BLUE
-    )
+    add_discord_event(f"{update_type} {version} downloaded")
+    await update_discord_status_embed()
+
 
 # Token Validation Functions
 
@@ -1048,15 +1095,8 @@ async def validate_device_token(token: str, bypass_cache: bool = False) -> Tuple
 
 async def notify_invalid_token(device_name: str, device_ip: str, error_message: str):
     """Sends Discord notification when device token is invalid"""
-    message = (f"**Token validation failed** for device **{device_name}** ({device_ip}).\n"
-               f"Error: {error_message}\n\n"
-               f"App startup has been blocked. Please update the device token in Rotomina settings.")
-    
-    await send_discord_notification(
-        message=message,
-        title="Invalid Device Token",
-        color=DISCORD_COLOR_RED
-    )
+    add_discord_event(f"Token invalid for {device_name}")
+    await update_discord_status_embed()
 
 # Device update tracking functions
 def mark_device_in_update(device_id: str, update_type: str) -> None:
@@ -2385,11 +2425,8 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     continue
             if not device_online:
                 log("Device did not come online within 3 minutes, aborting installation", device_ip, "ERROR")
-                await send_discord_notification(
-                    message=f"Installation aborted for **{device_name}** ({device_ip}). Device did not come online within 3 minutes.",
-                    title="Installation Aborted - Device Offline",
-                    color=DISCORD_COLOR_RED
-                )
+                add_discord_event(f"Install aborted — {device_name} offline")
+                await update_discord_status_embed()
                 clear_device_update_status(device_ip)
                 return False
 
@@ -2420,38 +2457,26 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             # Execute recovery action if needed
             if recovery_action:
                 if strategy_name == "cache_clear":
-                    await send_discord_notification(
-                        message=f"Insufficient storage on **{device_name}** ({device_ip}). Clearing cache and retrying.",
-                        title="Installation Retry - Clearing Cache",
-                        color=DISCORD_COLOR_ORANGE
-                    )
+                    add_discord_event(f"{device_name} — clearing cache, retrying install")
+                    await update_discord_status_embed()
                     update_progress(30)
                     recovery_success = await recovery_action(device_ip)
                     update_progress(40)
                 elif strategy_name == "uninstall_reinstall":
-                    await send_discord_notification(
-                        message=f"Cache clearing insufficient on **{device_name}** ({device_ip}). Uninstalling and reinstalling Pokemon GO.",
-                        title="Installation Retry - Uninstalling",
-                        color=DISCORD_COLOR_ORANGE
-                    )
+                    add_discord_event(f"{device_name} — uninstalling & reinstalling PoGo")
+                    await update_discord_status_embed()
                     update_progress(40)
                     recovery_success = await recovery_action(device_ip)
                     update_progress(45)
                 elif strategy_name == "storage_reclaim":
-                    await send_discord_notification(
-                        message=f"Reinstall after uninstall failed on **{device_name}** ({device_ip}). Trimming caches and filesystem to reclaim storage.",
-                        title="Installation Retry - Storage Reclaim",
-                        color=DISCORD_COLOR_ORANGE
-                    )
+                    add_discord_event(f"{device_name} — reclaiming storage")
+                    await update_discord_status_embed()
                     update_progress(40)
                     recovery_success = await recovery_action(device_ip)
                     update_progress(50)
                 elif strategy_name == "reboot_reinstall":
-                    await send_discord_notification(
-                        message=f"Installation after uninstall failed on **{device_name}** ({device_ip}). Rebooting device to reclaim storage.",
-                        title="Installation Retry - Rebooting",
-                        color=DISCORD_COLOR_ORANGE
-                    )
+                    add_discord_event(f"{device_name} — rebooting for install")
+                    await update_discord_status_embed()
                     update_progress(40)
                     recovery_success = await recovery_action(device_ip)
                     update_progress(50)
@@ -2492,11 +2517,8 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         
         # Handle final failure
         if not installation_success:
-            await send_discord_notification(
-                message=f"All installation attempts failed on **{device_name}** ({device_ip}). Final error: {error_msg}",
-                title="Installation Failed",
-                color=DISCORD_COLOR_RED
-            )
+            add_discord_event(f"Install failed on {device_name}")
+            await update_discord_status_embed()
             clear_device_update_status(device_ip)
             return False
         
@@ -2519,11 +2541,8 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                 await notify_update_installed(device_name, device_ip, "Pokemon GO", version)
             else:
                 log("Failed to start app after update", device_ip, "ERROR")
-                await send_discord_notification(
-                    message=f"Pokemon GO v{version} was installed on **{device_name}** ({device_ip}) but the app could not be started.",
-                    title="Installation OK, Startup Failed",
-                    color=DISCORD_COLOR_ORANGE
-                )
+                add_discord_event(f"PoGo {version} installed on {device_name} but app failed to start")
+                await update_discord_status_embed()
                 
             update_progress(90)
 
@@ -2554,11 +2573,8 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
         try:
             device_details = get_device_details(device_ip)
             device_name = device_details.get("display_name", device_ip.split(":")[0])
-            await send_discord_notification(
-                message=f"Pokemon GO update on **{device_name}** ({device_ip}) failed with exception: {str(e)}",
-                title="Update Failed - Exception",
-                color=DISCORD_COLOR_RED
-            )
+            add_discord_event(f"Update failed on {device_name}")
+            await update_discord_status_embed()
         except:
             pass
         return False
