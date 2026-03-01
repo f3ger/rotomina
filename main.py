@@ -837,12 +837,12 @@ async def start_discord_bot():
                 alive = "🟢" if dev.get("is_alive") else "🔴"
                 adb = "✅" if dev.get("status") else "❌"
                 in_upd = " ⏳" if dev.get("in_update") else ""
-                name = dev.get("name") or dev.get("ip", "?")
-                pogo_ver = dev.get("pogo_version", "?")
-                mem = dev.get("mem_free", "?")
+                name = dev.get("display_name") or dev.get("ip", "?")
+                pogo_ver = dev.get("pogo", "N/A")
+                mitm_ver = dev.get("mitm", "N/A")
                 embed.add_field(
                     name=f"{alive} {name}{in_upd}",
-                    value=f"ADB: {adb} | PoGo: `{pogo_ver}` | Free RAM: {mem} MB",
+                    value=f"ADB: {adb} | PoGo: `{pogo_ver}` | MITM: `{mitm_ver}`",
                     inline=False,
                 )
             await interaction.followup.send(embed=embed)
