@@ -884,34 +884,6 @@ async def start_discord_bot():
             _discord_bot_client = None
 
 
-@app.get("/discord-bot/status")
-async def discord_bot_status_endpoint(request: Request):
-    if redirect := require_login(request):
-        return redirect
-    if not DISCORD_BOT_AVAILABLE:
-        return JSONResponse({"status": "not_installed"})
-    cfg = load_config()
-    if not cfg.get("discord_bot_token", "").strip():
-        return JSONResponse({"status": "no_token"})
-    if _discord_bot_client is None:
-        return JSONResponse({"status": "offline"})
-    if not _discord_bot_client.is_ready():
-        return JSONResponse({"status": "connecting"})
-    return JSONResponse({"status": "online", "username": str(_discord_bot_client.user)})
-
-
-@app.post("/discord-bot/restart")
-async def discord_bot_restart_endpoint(request: Request):
-    if redirect := require_login(request):
-        return redirect
-    global _discord_bot_client
-    if _discord_bot_client is not None:
-        await _discord_bot_client.close()
-        _discord_bot_client = None
-    asyncio.create_task(start_discord_bot())
-    return JSONResponse({"status": "restarting"})
-
-
 # ────────────────────────────────────────────────────────────────────
 
 # Centralized timeout configuration
@@ -5287,6 +5259,35 @@ templates.env.globals.update({
     'get_device_display_name': lambda ip: get_device_details(ip)["display_name"],
     'get_available_versions': get_available_versions
 })
+
+# Discord Bot Endpoints
+@app.get("/discord-bot/status")
+async def discord_bot_status_endpoint(request: Request):
+    if redirect := require_login(request):
+        return redirect
+    if not DISCORD_BOT_AVAILABLE:
+        return JSONResponse({"status": "not_installed"})
+    cfg = load_config()
+    if not cfg.get("discord_bot_token", "").strip():
+        return JSONResponse({"status": "no_token"})
+    if _discord_bot_client is None:
+        return JSONResponse({"status": "offline"})
+    if not _discord_bot_client.is_ready():
+        return JSONResponse({"status": "connecting"})
+    return JSONResponse({"status": "online", "username": str(_discord_bot_client.user)})
+
+
+@app.post("/discord-bot/restart")
+async def discord_bot_restart_endpoint(request: Request):
+    if redirect := require_login(request):
+        return redirect
+    global _discord_bot_client
+    if _discord_bot_client is not None:
+        await _discord_bot_client.close()
+        _discord_bot_client = None
+    asyncio.create_task(start_discord_bot())
+    return JSONResponse({"status": "restarting"})
+
 
 # WebSocket Routes
 @app.websocket("/ws/status")
