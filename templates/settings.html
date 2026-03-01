@@ -350,10 +350,10 @@
                                     }">
                                     <span x-text="{
                                         online: '🟢 Online',
-                                        connecting: '🟡 Verbindet...',
+                                        connecting: '🟡 Connecting...',
                                         offline: '🔴 Offline',
-                                        no_token: '⚪ Kein Token',
-                                        not_installed: '❌ discord.py fehlt'
+                                        no_token: '⚪ No Token',
+                                        not_installed: '❌ discord.py missing'
                                     }[discordStatus] || discordStatus"></span>
                                     <span x-show="discordStatus === 'online' && discordBotUsername" x-text="'(' + discordBotUsername + ')'" class="text-green-500"></span>
                                 </span>
@@ -363,7 +363,7 @@
                                     <svg class="h-3.5 w-3.5" :class="{'animate-spin': discordRestarting}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                     </svg>
-                                    <span x-text="discordRestarting ? 'Neustart...' : 'Bot neustarten'"></span>
+                                    <span x-text="discordRestarting ? 'Restarting...' : 'Restart bot'"></span>
                                 </button>
                             </div>
                         </div>
@@ -375,8 +375,13 @@
                                     class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
                                     value="{{ config.discord_bot_token }}"
                                     placeholder="Bot token from the Discord Developer Portal">
-                                <p class="mt-1 text-sm text-gray-400">Bot token vom <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leer lassen um den Bot zu deaktivieren.</p>
-                                <p x-show="discordStatus === 'not_installed'" class="mt-1 text-sm text-red-400">⚠️ discord.py ist nicht installiert. Führe <code class="bg-gray-700 px-1 rounded">pip install "discord.py>=2.3.0"</code> aus und starte rotomina neu.</p>
+                                <p class="mt-1 text-sm text-gray-400">Bot token from the <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leave empty to disable the bot.</p>
+                                <div x-show="discordStatus === 'not_installed'" class="mt-2 bg-red-900/20 border border-red-700/50 rounded-md p-3 text-sm text-red-400 space-y-1">
+                                    <p>⚠️ discord.py could not be imported. Install it with:</p>
+                                    <code class="block bg-gray-900 px-2 py-1 rounded text-xs">pip install "discord.py>=2.3.0"</code>
+                                    <p class="text-xs text-red-500">If rotomina runs in a virtual environment, activate it first or use the venv pip directly: <code class="bg-gray-900 px-1 rounded">venv\Scripts\pip install "discord.py>=2.3.0"</code></p>
+                                    <p x-show="discordImportError" class="text-xs text-gray-500">Import error: <span x-text="discordImportError"></span></p>
+                                </div>
                             </div>
                             <div>
                                 <label for="discord_bot_channel_id"
@@ -795,6 +800,7 @@
             // Discord bot status
             discordStatus: null,
             discordBotUsername: '',
+            discordImportError: '',
             discordRestarting: false,
 
             async loadDiscordStatus() {
@@ -803,6 +809,7 @@
                     const data = await res.json();
                     this.discordStatus = data.status;
                     this.discordBotUsername = data.username || '';
+                    this.discordImportError = data.error || '';
                 } catch (e) {
                     this.discordStatus = 'offline';
                 }
@@ -842,7 +849,7 @@
                 if (token.trim()) {
                     await this.restartDiscordBot();
                 }
-                window.location.href = '/settings?success=Einstellungen gespeichert';
+                window.location.href = '/settings?success=Settings saved';
             },
 
             // Setup state

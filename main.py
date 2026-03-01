@@ -21,12 +21,14 @@ from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from uuid import uuid4
 
+DISCORD_IMPORT_ERROR: str = ""
 try:
     import discord
     from discord import app_commands
     DISCORD_BOT_AVAILABLE = True
-except ImportError:
+except ImportError as _discord_err:
     DISCORD_BOT_AVAILABLE = False
+    DISCORD_IMPORT_ERROR = str(_discord_err)
 
 from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -5266,7 +5268,7 @@ async def discord_bot_status_endpoint(request: Request):
     if redirect := require_login(request):
         return redirect
     if not DISCORD_BOT_AVAILABLE:
-        return JSONResponse({"status": "not_installed"})
+        return JSONResponse({"status": "not_installed", "error": DISCORD_IMPORT_ERROR})
     cfg = load_config()
     if not cfg.get("discord_bot_token", "").strip():
         return JSONResponse({"status": "no_token"})
