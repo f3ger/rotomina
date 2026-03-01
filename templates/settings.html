@@ -310,7 +310,7 @@
             <h2 class="text-xl font-medium text-white">API Settings</h2>
         </div>
         <div class="p-6">
-            <form action="/settings/save" method="post" class="space-y-4">
+            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label for="rotomApiUrl" class="block text-sm font-medium text-gray-300 mb-1">Rotom API
@@ -338,8 +338,34 @@
                 <!-- Discord Bot Settings -->
                 <div class="pt-2">
                     <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6">
-                        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
+                        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between flex-wrap gap-3">
                             <h2 class="text-xl font-medium text-white">Discord Bot</h2>
+                            <div class="flex items-center gap-3">
+                                <span x-show="discordStatus !== null" class="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1"
+                                    :class="{
+                                        'bg-green-900/50 text-green-400': discordStatus === 'online',
+                                        'bg-yellow-900/50 text-yellow-400': discordStatus === 'connecting',
+                                        'bg-red-900/50 text-red-400': discordStatus === 'offline' || discordStatus === 'not_installed',
+                                        'bg-gray-700 text-gray-400': discordStatus === 'no_token'
+                                    }">
+                                    <span x-text="{
+                                        online: '🟢 Online',
+                                        connecting: '🟡 Verbindet...',
+                                        offline: '🔴 Offline',
+                                        no_token: '⚪ Kein Token',
+                                        not_installed: '❌ discord.py fehlt'
+                                    }[discordStatus] || discordStatus"></span>
+                                    <span x-show="discordStatus === 'online' && discordBotUsername" x-text="'(' + discordBotUsername + ')'" class="text-green-500"></span>
+                                </span>
+                                <button type="button" @click="restartDiscordBot()"
+                                    :disabled="discordRestarting || discordStatus === 'no_token' || discordStatus === 'not_installed'"
+                                    class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded-md text-xs font-medium flex items-center gap-1">
+                                    <svg class="h-3.5 w-3.5" :class="{'animate-spin': discordRestarting}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    <span x-text="discordRestarting ? 'Neustart...' : 'Bot neustarten'"></span>
+                                </button>
+                            </div>
                         </div>
                         <div class="p-6 space-y-4">
                             <div>
@@ -349,7 +375,8 @@
                                     class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
                                     value="{{ config.discord_bot_token }}"
                                     placeholder="Bot token from the Discord Developer Portal">
-                                <p class="mt-1 text-sm text-gray-400">Bot token from the <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leave empty to disable the bot.</p>
+                                <p class="mt-1 text-sm text-gray-400">Bot token vom <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leer lassen um den Bot zu deaktivieren.</p>
+                                <p x-show="discordStatus === 'not_installed'" class="mt-1 text-sm text-red-400">⚠️ discord.py ist nicht installiert. Führe <code class="bg-gray-700 px-1 rounded">pip install "discord.py>=2.3.0"</code> aus und starte rotomina neu.</p>
                             </div>
                             <div>
                                 <label for="discord_bot_channel_id"
@@ -765,6 +792,59 @@
             newDeviceIp: '',
             isSubmitting: false,
 
+            // Discord bot status
+            discordStatus: null,
+            discordBotUsername: '',
+            discordRestarting: false,
+
+            async loadDiscordStatus() {
+                try {
+                    const res = await fetch('/discord-bot/status');
+                    const data = await res.json();
+                    this.discordStatus = data.status;
+                    this.discordBotUsername = data.username || '';
+                } catch (e) {
+                    this.discordStatus = 'offline';
+                }
+            },
+
+            async restartDiscordBot() {
+                this.discordRestarting = true;
+                this.discordStatus = 'connecting';
+                try {
+                    await fetch('/discord-bot/restart', { method: 'POST' });
+                    // Poll until online or error (max 15s)
+                    let attempts = 0;
+                    const poll = async () => {
+                        attempts++;
+                        await this.loadDiscordStatus();
+                        if (this.discordStatus === 'connecting' && attempts < 30) {
+                            setTimeout(poll, 500);
+                        } else {
+                            this.discordRestarting = false;
+                        }
+                    };
+                    setTimeout(poll, 1000);
+                } catch (e) {
+                    this.discordRestarting = false;
+                    await this.loadDiscordStatus();
+                }
+            },
+
+            async saveSettingsAndRestartBot(form) {
+                const formData = new FormData(form);
+                const token = formData.get('discord_bot_token') || '';
+                try {
+                    await fetch('/settings/save', { method: 'POST', body: formData });
+                } catch (e) {
+                    // Ignore fetch errors from redirect
+                }
+                if (token.trim()) {
+                    await this.restartDiscordBot();
+                }
+                window.location.href = '/settings?success=Einstellungen gespeichert';
+            },
+
             // Setup state
             setupId: null,
             setupStep: '',
@@ -958,6 +1038,7 @@
 
             // Auto-dismiss alerts after 5 seconds
             initAlerts() {
+                this.loadDiscordStatus();
                 setTimeout(() => {
                     const successAlert = document.getElementById('success-alert');
                     const errorAlert = document.getElementById('error-alert');

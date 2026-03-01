@@ -878,6 +878,38 @@ async def start_discord_bot():
         log("Discord Bot: Invalid token – bot not started.", None, "DISCORD")
     except Exception as e:
         log(f"Discord Bot error: {e}", None, "DISCORD")
+    finally:
+        # Clear global reference when bot disconnects
+        if _discord_bot_client is client:
+            _discord_bot_client = None
+
+
+@app.get("/discord-bot/status")
+async def discord_bot_status_endpoint(request: Request):
+    if redirect := require_login(request):
+        return redirect
+    if not DISCORD_BOT_AVAILABLE:
+        return JSONResponse({"status": "not_installed"})
+    cfg = load_config()
+    if not cfg.get("discord_bot_token", "").strip():
+        return JSONResponse({"status": "no_token"})
+    if _discord_bot_client is None:
+        return JSONResponse({"status": "offline"})
+    if not _discord_bot_client.is_ready():
+        return JSONResponse({"status": "connecting"})
+    return JSONResponse({"status": "online", "username": str(_discord_bot_client.user)})
+
+
+@app.post("/discord-bot/restart")
+async def discord_bot_restart_endpoint(request: Request):
+    if redirect := require_login(request):
+        return redirect
+    global _discord_bot_client
+    if _discord_bot_client is not None:
+        await _discord_bot_client.close()
+        _discord_bot_client = None
+    asyncio.create_task(start_discord_bot())
+    return JSONResponse({"status": "restarting"})
 
 
 # ────────────────────────────────────────────────────────────────────
