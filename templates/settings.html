@@ -376,11 +376,15 @@
                                     value="{{ config.discord_bot_token }}"
                                     placeholder="Bot token from the Discord Developer Portal">
                                 <p class="mt-1 text-sm text-gray-400">Bot token from the <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leave empty to disable the bot.</p>
-                                <div x-show="discordStatus === 'not_installed'" class="mt-2 bg-red-900/20 border border-red-700/50 rounded-md p-3 text-sm text-red-400 space-y-1">
-                                    <p>⚠️ discord.py could not be imported. Install it with:</p>
-                                    <code class="block bg-gray-900 px-2 py-1 rounded text-xs">pip install "discord.py>=2.3.0"</code>
-                                    <p class="text-xs text-red-500">If rotomina runs in a virtual environment, activate it first or use the venv pip directly: <code class="bg-gray-900 px-1 rounded">venv\Scripts\pip install "discord.py>=2.3.0"</code></p>
-                                    <p x-show="discordImportError" class="text-xs text-gray-500">Import error: <span x-text="discordImportError"></span></p>
+                                <div x-show="discordStatus === 'not_installed'" class="mt-2 bg-red-900/20 border border-red-700/50 rounded-md p-3 text-sm text-red-400 space-y-2">
+                                    <p>⚠️ discord.py could not be imported.</p>
+                                    <p x-show="discordImportError" class="text-xs text-gray-500">Error: <span x-text="discordImportError"></span></p>
+                                    <div x-show="discordPythonPath">
+                                        <p class="text-xs text-gray-400">Rotomina uses: <code class="bg-gray-900 px-1 rounded" x-text="discordPythonPath"></code></p>
+                                        <p class="text-xs text-gray-400 mt-1">Install discord.py for this interpreter:</p>
+                                        <code class="block bg-gray-900 px-2 py-1 rounded text-xs text-blue-300 select-all mt-1" x-text="discordPythonPath + ' -m pip install &quot;discord.py>=2.3.0&quot;'"></code>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">Restart rotomina after installing.</p>
                                 </div>
                             </div>
                             <div>
@@ -801,6 +805,7 @@
             discordStatus: null,
             discordBotUsername: '',
             discordImportError: '',
+            discordPythonPath: '',
             discordRestarting: false,
 
             async loadDiscordStatus() {
@@ -810,6 +815,7 @@
                     this.discordStatus = data.status;
                     this.discordBotUsername = data.username || '';
                     this.discordImportError = data.error || '';
+                    this.discordPythonPath = data.python_path || '';
                 } catch (e) {
                     this.discordStatus = 'offline';
                 }

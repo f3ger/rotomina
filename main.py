@@ -5268,7 +5268,7 @@ async def discord_bot_status_endpoint(request: Request):
     if redirect := require_login(request):
         return redirect
     if not DISCORD_BOT_AVAILABLE:
-        return JSONResponse({"status": "not_installed", "error": DISCORD_IMPORT_ERROR})
+        return JSONResponse({"status": "not_installed", "error": DISCORD_IMPORT_ERROR, "python_path": sys.executable})
     cfg = load_config()
     if not cfg.get("discord_bot_token", "").strip():
         return JSONResponse({"status": "no_token"})
