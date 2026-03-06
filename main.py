@@ -31,7 +31,7 @@ except ImportError as _discord_err:
     DISCORD_BOT_AVAILABLE = False
     DISCORD_IMPORT_ERROR = str(_discord_err)
 
-from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -2167,6 +2167,49 @@ def unzip_apk(apk_path: Path, extract_dir: Path):
         raise
     except Exception as e:
         log(f"Extraction error: {str(e)}", None, "ERROR")
+        raise
+
+def extract_pogo_version_from_apkm(apkm_path: Path) -> str:
+    """Extracts the Pokemon GO version string from an .apkm file.
+    The .apkm is a ZIP containing APK files. Finds base.apk (or the largest APK)
+    and reads its AndroidManifest.xml to extract the version."""
+    try:
+        with zipfile.ZipFile(apkm_path, 'r') as apkm_zip:
+            apk_entries = [f for f in apkm_zip.namelist() if f.endswith('.apk')]
+            if not apk_entries:
+                raise Exception("No .apk files found inside .apkm archive")
+
+            target_apk = 'base.apk' if 'base.apk' in apk_entries else max(
+                apk_entries, key=lambda f: apkm_zip.getinfo(f).file_size
+            )
+            apk_data = apkm_zip.read(target_apk)
+
+        import io
+        with zipfile.ZipFile(io.BytesIO(apk_data), 'r') as apk_zip:
+            manifest_data = apk_zip.read('AndroidManifest.xml')
+
+        if len(manifest_data) < 4 or manifest_data[:4] != b'\x03\x00\x08\x00':
+            raise Exception("Not a valid Android Binary XML file")
+
+        decoded = manifest_data.decode('utf-16le', errors='ignore')
+        version_matches = re.findall(r'(\d+\.\d+\.\d+)', decoded)
+
+        # Filter for plausible PoGO versions (0.xxx.x pattern)
+        pogo_versions = [v for v in version_matches if v.startswith('0.') and int(v.split('.')[1]) >= 100]
+        if pogo_versions:
+            pogo_versions.sort(key=lambda x: [int(n) for n in x.split('.')], reverse=True)
+            return pogo_versions[0]
+
+        if version_matches:
+            version_matches.sort(key=lambda x: [int(n) for n in x.split('.')], reverse=True)
+            return version_matches[0]
+
+        raise Exception("No valid version found in AndroidManifest.xml")
+
+    except zipfile.BadZipFile:
+        raise Exception("File is not a valid ZIP/APKM archive")
+    except Exception as e:
+        log(f"Version extraction from APKM failed: {e}", None, "ERROR")
         raise
 
 # Optimized APK Installation
@@ -5822,8 +5865,20 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
             return RedirectResponse(url="/status?error=Failed to check version", status_code=302)
     
     if not target_version:
+        # Fallback: check for locally uploaded APK
+        local_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm"
+        local_path = APK_DIR / local_filename
+        if local_path.exists():
+            target_version = {
+                "version": version,
+                "filename": local_filename,
+                "arch": DEFAULT_ARCH
+            }
+            log(f"Using locally uploaded APK for version {version}", None, "UPDATE")
+
+    if not target_version:
         return RedirectResponse(url="/status?error=Version not found", status_code=302)
-    
+
     global update_in_progress, current_progress
     try:
         update_in_progress = True
@@ -5878,6 +5933,100 @@ async def pogo_update(request: Request):
     await perform_installations(device_ips, version_extract_dir)
     
     return RedirectResponse(url="/status", status_code=302)
+
+MAX_APK_UPLOAD_SIZE = 300 * 1024 * 1024  # 300 MB
+
+@app.post("/pogo/upload-apk")
+async def upload_pogo_apk(request: Request, file: UploadFile = File(...)):
+    """Upload a .apkm file manually as fallback when mirror is unavailable"""
+    if redirect := require_login(request):
+        return redirect
+
+    if not file.filename or not file.filename.lower().endswith('.apkm'):
+        return JSONResponse(status_code=400, content={"success": False, "error": "Only .apkm files are accepted"})
+
+    try:
+        content = await file.read()
+        if len(content) > MAX_APK_UPLOAD_SIZE:
+            return JSONResponse(status_code=400, content={"success": False, "error": f"File too large. Maximum size is {MAX_APK_UPLOAD_SIZE // (1024*1024)}MB"})
+        if len(content) < 1024:
+            return JSONResponse(status_code=400, content={"success": False, "error": "File is too small to be a valid .apkm"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": f"Failed to read uploaded file: {str(e)}"})
+
+    APK_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = APK_DIR / f"_upload_temp_{uuid4().hex}.apkm"
+
+    try:
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        try:
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                apk_files = [f for f in zf.namelist() if f.endswith('.apk')]
+                if not apk_files:
+                    return JSONResponse(status_code=400, content={"success": False, "error": "Invalid .apkm file: no .apk files found inside the archive"})
+        except zipfile.BadZipFile:
+            return JSONResponse(status_code=400, content={"success": False, "error": "Invalid file: not a valid ZIP/APKM archive"})
+
+        try:
+            version = extract_pogo_version_from_apkm(temp_path)
+            log(f"Extracted version {version} from uploaded APKM", None, "UPDATE")
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"success": False, "error": f"Could not extract version from APKM: {str(e)}"})
+
+        target_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm"
+        target_path = APK_DIR / target_filename
+
+        if target_path.exists():
+            temp_path.unlink(missing_ok=True)
+            return JSONResponse(content={"success": True, "version": version, "message": f"Version {version} is already available", "already_exists": True})
+
+        shutil.move(str(temp_path), str(target_path))
+        log(f"Saved uploaded APKM as {target_filename}", None, "UPDATE")
+
+        extract_dir = EXTRACT_DIR / version
+        try:
+            unzip_apk(target_path, extract_dir)
+            log(f"Extracted uploaded APKM to {extract_dir}", None, "UPDATE")
+        except Exception as e:
+            log(f"Warning: Failed to pre-extract uploaded APKM: {e}", None, "WARNING")
+
+        get_available_versions.cache_clear()
+
+        try:
+            status_data = await get_status_data()
+            await ws_manager.broadcast(status_data)
+        except Exception:
+            pass
+
+        return JSONResponse(content={"success": True, "version": version, "filename": target_filename, "message": f"Version {version} uploaded and ready for installation"})
+
+    except Exception as e:
+        log(f"APK upload error: {str(e)}", None, "ERROR")
+        return JSONResponse(status_code=500, content={"success": False, "error": f"Upload failed: {str(e)}"})
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+@app.get("/api/pogo-local-versions")
+async def get_local_pogo_versions(request: Request):
+    """Returns list of locally available PoGO APK versions"""
+    if redirect := require_login(request):
+        return redirect
+
+    APK_DIR.mkdir(parents=True, exist_ok=True)
+    versions = []
+
+    for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+        match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+        if match:
+            version = match.group(1)
+            size_mb = round(apkm_file.stat().st_size / (1024 * 1024), 1)
+            versions.append({"version": version, "filename": apkm_file.name, "size_mb": size_mb})
+
+    versions.sort(key=lambda x: [int(n) for n in x["version"].split(".")], reverse=True)
+    return JSONResponse(content={"versions": versions})
 
 @app.post("/settings/toggle-pif-autoupdate", response_class=HTMLResponse)
 def toggle_pif_autoupdate(request: Request, enabled: Optional[str] = Form(None)):

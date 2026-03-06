@@ -498,6 +498,108 @@
         </div>
     </div>
 
+    <!-- Manual APK Upload -->
+    <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6" x-data="apkUpload()">
+        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
+            <h2 class="text-xl font-medium text-white">Manual PoGO APK Upload</h2>
+        </div>
+        <div class="p-6">
+            <p class="text-sm text-gray-400 mb-4">
+                Upload a .apkm file manually when a version is not available on the Unown mirror.
+                The uploaded APK will be available for installation on all devices.
+            </p>
+
+            <!-- File input -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-300 mb-2">Select .apkm file</label>
+                <label class="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
+                    :class="{ 'border-blue-500 bg-blue-900/20': selectedFile }">
+                    <input type="file" accept=".apkm" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
+                    <div class="text-center">
+                        <svg class="mx-auto h-8 w-8 text-gray-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : 'Click to select .apkm file'"></span>
+                    </div>
+                </label>
+            </div>
+
+            <!-- Upload button -->
+            <button type="button" @click="uploadApk()"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="!selectedFile || uploading">
+                <template x-if="!uploading">
+                    <span class="flex items-center">
+                        <svg class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Upload APK
+                    </span>
+                </template>
+                <template x-if="uploading">
+                    <span class="flex items-center">
+                        <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Uploading...
+                    </span>
+                </template>
+            </button>
+
+            <!-- Progress bar -->
+            <div x-show="uploading" class="mt-4">
+                <div class="flex justify-between text-sm text-gray-400 mb-1">
+                    <span>Upload progress</span>
+                    <span x-text="uploadProgress + '%'"></span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2.5">
+                    <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                        :style="'width: ' + uploadProgress + '%'"></div>
+                </div>
+            </div>
+
+            <!-- Success message -->
+            <div x-show="uploadSuccess" class="mt-4 bg-green-900/30 border border-green-700 text-green-400 px-4 py-3 rounded">
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span x-text="uploadMessage"></span>
+                </div>
+            </div>
+
+            <!-- Error message -->
+            <div x-show="uploadError" class="mt-4 bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded">
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span x-text="uploadError"></span>
+                </div>
+            </div>
+
+            <!-- Locally available versions -->
+            <div class="mt-6 border-t border-gray-700 pt-4">
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions</h4>
+                <div x-show="localVersions.length === 0" class="text-sm text-gray-500">No locally stored APK versions found.</div>
+                <div x-show="localVersions.length > 0" class="space-y-1">
+                    <template x-for="v in localVersions" :key="v.version">
+                        <div class="flex items-center justify-between text-sm bg-gray-800/40 border border-gray-700 rounded px-3 py-2">
+                            <span class="text-gray-300" x-text="v.version"></span>
+                            <span class="text-gray-500 text-xs" x-text="v.size_mb + ' MB'"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Cache Management -->
     <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6">
         <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
@@ -791,6 +893,115 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
         `;
         }
+    }
+
+    // Alpine.js component for APK upload
+    function apkUpload() {
+        return {
+            selectedFile: null,
+            uploading: false,
+            uploadProgress: 0,
+            uploadSuccess: false,
+            uploadError: null,
+            uploadMessage: '',
+            localVersions: [],
+
+            init() {
+                this.loadLocalVersions();
+            },
+
+            onFileSelected(event) {
+                const file = event.target.files[0];
+                if (!file) { this.selectedFile = null; return; }
+
+                if (!file.name.toLowerCase().endsWith('.apkm')) {
+                    this.uploadError = 'Only .apkm files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+                if (file.size > 300 * 1024 * 1024) {
+                    this.uploadError = 'File is too large. Maximum size is 300MB.';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+
+                this.uploadError = null;
+                this.uploadSuccess = false;
+                this.selectedFile = file;
+            },
+
+            formatSize(bytes) {
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            },
+
+            async uploadApk() {
+                if (!this.selectedFile || this.uploading) return;
+
+                this.uploading = true;
+                this.uploadProgress = 0;
+                this.uploadSuccess = false;
+                this.uploadError = null;
+
+                const formData = new FormData();
+                formData.append('file', this.selectedFile);
+
+                try {
+                    const result = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+
+                        xhr.upload.addEventListener('progress', (e) => {
+                            if (e.lengthComputable) {
+                                this.uploadProgress = Math.round((e.loaded / e.total) * 100);
+                            }
+                        });
+
+                        xhr.addEventListener('load', () => {
+                            try {
+                                const data = JSON.parse(xhr.responseText);
+                                if (xhr.status >= 200 && xhr.status < 300) {
+                                    resolve(data);
+                                } else {
+                                    reject(data.error || 'Upload failed');
+                                }
+                            } catch (e) {
+                                reject('Invalid server response');
+                            }
+                        });
+
+                        xhr.addEventListener('error', () => reject('Network error during upload'));
+                        xhr.addEventListener('timeout', () => reject('Upload timed out'));
+
+                        xhr.open('POST', '/pogo/upload-apk');
+                        xhr.timeout = 300000;
+                        xhr.send(formData);
+                    });
+
+                    this.uploadSuccess = true;
+                    this.uploadMessage = result.message || 'Upload successful';
+                    this.selectedFile = null;
+                    this.loadLocalVersions();
+
+                    setTimeout(() => { this.uploadSuccess = false; }, 10000);
+                } catch (error) {
+                    this.uploadError = typeof error === 'string' ? error : 'Upload failed. Please try again.';
+                } finally {
+                    this.uploading = false;
+                }
+            },
+
+            async loadLocalVersions() {
+                try {
+                    const res = await fetch('/api/pogo-local-versions');
+                    const data = await res.json();
+                    this.localVersions = data.versions || [];
+                } catch (e) {
+                    this.localVersions = [];
+                }
+            }
+        };
     }
 
     // Alpine.js component for settings page
