@@ -5217,11 +5217,23 @@ async def get_status_data():
             "last_runtime": last_runtime
         })
     
+    # Collect locally available versions not already shown as latest/previous
+    local_only_versions = []
+    if APK_DIR.exists():
+        for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+            if match:
+                ver = match.group(1)
+                if ver != pogo_latest and ver != pogo_previous:
+                    local_only_versions.append(ver)
+        local_only_versions.sort(key=lambda x: [int(n) for n in x.split(".")], reverse=True)
+
     return {
         "devices": devices,
         "now": time.time(),
         "pogo_latest": pogo_latest,
         "pogo_previous": pogo_previous,
+        "pogo_local_versions": local_only_versions,
         "pif_auto_update_enabled": config.get("pif_auto_update_enabled", True),
         "pogo_auto_update_enabled": config.get("pogo_auto_update_enabled", True),
         "update_in_progress": update_in_progress,
@@ -5539,6 +5551,17 @@ async def status_page(request: Request):
             "update_info": update_info
         })
     
+    # Collect locally available versions not already shown as latest/previous
+    local_only_versions = []
+    if APK_DIR.exists():
+        for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+            if match:
+                ver = match.group(1)
+                if ver != pogo_latest and ver != pogo_previous:
+                    local_only_versions.append(ver)
+        local_only_versions.sort(key=lambda x: [int(n) for n in x.split(".")], reverse=True)
+
     return templates.TemplateResponse("status.html", {
         "request": request,
         "username": request.session.get("username", ""),
@@ -5547,7 +5570,8 @@ async def status_page(request: Request):
         "token_valid": token_valid,
         "now": time.time(),
         "pogo_latest": pogo_latest,
-        "pogo_previous": pogo_previous
+        "pogo_previous": pogo_previous,
+        "pogo_local_versions": local_only_versions
     })
 
 @app.get("/settings", response_class=HTMLResponse)
