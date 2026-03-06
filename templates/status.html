@@ -3,7 +3,6 @@
 {% block content %}
 <div x-data="statusPage()" x-init="init()" x-cloak data-pogo-latest="{{ pogo_latest }}"
     data-pogo-previous="{{ pogo_previous }}"
-    data-pogo-local-versions="{{ pogo_local_versions | tojson }}"
     data-pogo-auto-update-enabled="{% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %}"
     data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}">
     <!-- Header with status information -->
@@ -130,19 +129,14 @@
                             </svg>
                         </button>
                         <div x-show="open" @click.away="open = false"
-                            class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20 max-h-60 overflow-y-auto">
+                            class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-1 divide-y divide-gray-700">
                                 <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
                                     class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                    x-text="pogoLatest + ' (latest)'"></button>
+                                    x-text="pogoLatest"></button>
                                 <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
                                     class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                    x-text="pogoPrevious + ' (previous)'"></button>
-                                <template x-for="lv in pogoLocalVersions" :key="lv">
-                                    <button type="button" @click="updateDevicePogo(device.ip, lv)"
-                                        class="block px-4 py-2 text-sm text-blue-400 hover:bg-gray-800 w-full text-left"
-                                        x-text="lv + ' (local)'"></button>
-                                </template>
+                                    x-text="pogoPrevious"></button>
                             </div>
                         </div>
                     </div>
@@ -425,19 +419,14 @@
                                         </svg>
                                     </button>
                                     <div x-show="open" @click.away="open = false"
-                                        class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10 max-h-60 overflow-y-auto">
+                                        class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-1 divide-y divide-gray-700">
                                             <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
                                                 class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                                x-text="pogoLatest + ' (latest)'"></button>
+                                                x-text="pogoLatest"></button>
                                             <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
                                                 class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                                x-text="pogoPrevious + ' (previous)'"></button>
-                                            <template x-for="lv in pogoLocalVersions" :key="lv">
-                                                <button type="button" @click="updateDevicePogo(device.ip, lv)"
-                                                    class="block px-4 py-2 text-sm text-blue-400 hover:bg-gray-800 w-full text-left"
-                                                    x-text="lv + ' (local)'"></button>
-                                            </template>
+                                                x-text="pogoPrevious"></button>
                                         </div>
                                     </div>
                                 </div>
@@ -574,7 +563,6 @@
             moduleType: 'all',
             pogoLatest: "N/A",
             pogoPrevious: "N/A",
-            pogoLocalVersions: [],
             pogoAutoUpdateEnabled: false,
             pifAutoUpdateEnabled: false,
             lastUpdated: new Date().toLocaleTimeString(),
@@ -607,7 +595,6 @@
                     if (el && el.dataset) {
                         this.pogoLatest = el.dataset.pogoLatest || this.pogoLatest;
                         this.pogoPrevious = el.dataset.pogoPrevious || this.pogoPrevious;
-                        try { this.pogoLocalVersions = JSON.parse(el.dataset.pogoLocalVersions || '[]'); } catch(e) { this.pogoLocalVersions = []; }
                         this.pogoAutoUpdateEnabled = el.dataset.pogoAutoUpdateEnabled === 'true';
                         this.pifAutoUpdateEnabled = el.dataset.pifAutoUpdateEnabled === 'true';
                     }
@@ -762,7 +749,6 @@
                 this.sortedDevices = [...this.devices];
                 this.pogoLatest = data.pogo_latest || "N/A";
                 this.pogoPrevious = data.pogo_previous || "N/A";
-                this.pogoLocalVersions = data.pogo_local_versions || [];
                 this.pogoAutoUpdateEnabled = data.pogo_auto_update_enabled;
                 this.pifAutoUpdateEnabled = data.pif_auto_update_enabled;
                 this.lastUpdated = new Date().toLocaleTimeString();

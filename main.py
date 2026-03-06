@@ -2037,61 +2037,72 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
 # APK Management with UnownHash Mirror
 @ttl_cache(ttl=3600)
 def get_available_versions() -> Dict:
+    processed = []
+    seen_versions = set()
+
+    # 1. Fetch from Unown mirror
     try:
         response = httpx.get(
             f"{POGO_MIRROR_URL}/index.json",
             timeout=10
         )
-        if response.status_code != 200:
-            log(f"Mirror returned status code {response.status_code}", None, "ERROR")
-            return {"latest": {}, "previous": {}}
-
-        versions_data = response.json()
-        
-        processed = []
-        for entry in versions_data:
-            if entry["arch"] != DEFAULT_ARCH:
-                continue
-                
-            clean_version = entry["version"].replace(".apkm", "")
-            processed.append({
-                "version": clean_version,
-                "filename": f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
-                "url": f"{POGO_MIRROR_URL}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
-                "date": entry.get("date", ""),
-                "arch": DEFAULT_ARCH
-            })
-
-        sorted_versions = sorted(
-            processed,
-            key=lambda x: [int(n) for n in x["version"].split(".")],
-            reverse=True
-        )
-        
-        distinct_versions = []
-        seen_versions = set()
-        
-        for version in sorted_versions:
-            ver = version["version"]
-            if ver not in seen_versions:
-                distinct_versions.append(version)
-                seen_versions.add(ver)
-        
-        if distinct_versions:
-            latest_ver = distinct_versions[0]["version"] if distinct_versions else "N/A"
-            prev_ver = distinct_versions[1]["version"] if len(distinct_versions) > 1 else "N/A"
-            log(f"Found versions - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
+        if response.status_code == 200:
+            versions_data = response.json()
+            for entry in versions_data:
+                if entry["arch"] != DEFAULT_ARCH:
+                    continue
+                clean_version = entry["version"].replace(".apkm", "")
+                if clean_version not in seen_versions:
+                    processed.append({
+                        "version": clean_version,
+                        "filename": f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
+                        "url": f"{POGO_MIRROR_URL}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
+                        "date": entry.get("date", ""),
+                        "arch": DEFAULT_ARCH
+                    })
+                    seen_versions.add(clean_version)
         else:
-            log("No versions found", None, "VERSION")
-        
-        return {
-            "latest": distinct_versions[0] if distinct_versions else {},
-            "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
-        }
-        
+            log(f"Mirror returned status code {response.status_code}", None, "ERROR")
     except Exception as e:
         log(f"Mirror check error: {str(e)}", None, "ERROR")
-        return {"latest": {}, "previous": {}}
+
+    # 2. Include locally available APKs not already in the list
+    try:
+        if APK_DIR.exists():
+            for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": apkm_file.name,
+                            "url": "",
+                            "date": "",
+                            "arch": DEFAULT_ARCH
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local APKs: {str(e)}", None, "ERROR")
+
+    # 3. Sort all versions together, regardless of source
+    distinct_versions = sorted(
+        processed,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    if distinct_versions:
+        latest_ver = distinct_versions[0]["version"]
+        prev_ver = distinct_versions[1]["version"] if len(distinct_versions) > 1 else "N/A"
+        log(f"Found versions - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
+    else:
+        log("No versions found", None, "VERSION")
+
+    return {
+        "latest": distinct_versions[0] if distinct_versions else {},
+        "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
+    }
 
 def download_apk(version_info: Dict) -> Path:
     try:
@@ -5217,23 +5228,11 @@ async def get_status_data():
             "last_runtime": last_runtime
         })
     
-    # Collect locally available versions not already shown as latest/previous
-    local_only_versions = []
-    if APK_DIR.exists():
-        for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-            if match:
-                ver = match.group(1)
-                if ver != pogo_latest and ver != pogo_previous:
-                    local_only_versions.append(ver)
-        local_only_versions.sort(key=lambda x: [int(n) for n in x.split(".")], reverse=True)
-
     return {
         "devices": devices,
         "now": time.time(),
         "pogo_latest": pogo_latest,
         "pogo_previous": pogo_previous,
-        "pogo_local_versions": local_only_versions,
         "pif_auto_update_enabled": config.get("pif_auto_update_enabled", True),
         "pogo_auto_update_enabled": config.get("pogo_auto_update_enabled", True),
         "update_in_progress": update_in_progress,
@@ -5551,17 +5550,6 @@ async def status_page(request: Request):
             "update_info": update_info
         })
     
-    # Collect locally available versions not already shown as latest/previous
-    local_only_versions = []
-    if APK_DIR.exists():
-        for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-            if match:
-                ver = match.group(1)
-                if ver != pogo_latest and ver != pogo_previous:
-                    local_only_versions.append(ver)
-        local_only_versions.sort(key=lambda x: [int(n) for n in x.split(".")], reverse=True)
-
     return templates.TemplateResponse("status.html", {
         "request": request,
         "username": request.session.get("username", ""),
@@ -5570,8 +5558,7 @@ async def status_page(request: Request):
         "token_valid": token_valid,
         "now": time.time(),
         "pogo_latest": pogo_latest,
-        "pogo_previous": pogo_previous,
-        "pogo_local_versions": local_only_versions
+        "pogo_previous": pogo_previous
     })
 
 @app.get("/settings", response_class=HTMLResponse)
