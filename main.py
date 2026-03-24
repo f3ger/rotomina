@@ -2875,6 +2875,7 @@ class MapWorldConfig:
     apk_base_name: str = "mapworld"
     package_name: str = "com.github.furtif.furtifformaps"  # Adjust to actual MapWorld package
     cache_file: Path = BASE_DIR / "data" / "mapworld_metadata_cache"
+    etag_file: Path = BASE_DIR / "data" / "mapworld_last_etag"
     check_interval_hours: int = 1
     download_timeout: int = 300
     metadata_timeout: int = 10
@@ -3127,12 +3128,14 @@ class MapWorldUpdater:
             if not remote_meta:
                 return False, "Could not retrieve remote metadata"
 
-            # ETag-based comparison (most reliable)
+            # ETag-based comparison: compare stored remote ETag vs current remote ETag
             if remote_meta.get("etag"):
-                local_etag = await self._get_local_file_etag(current_apk)
                 remote_etag = remote_meta["etag"].strip('"')
-                if local_etag != remote_etag:
-                    return True, f"ETag mismatch: local={local_etag}, remote={remote_etag}"
+                stored_etag = self._load_stored_etag()
+                if stored_etag and stored_etag == remote_etag:
+                    return False, "No updates available (ETag unchanged)"
+                if stored_etag:
+                    return True, f"ETag mismatch: stored={stored_etag}, remote={remote_etag}"
 
             # Fallback to timestamp and size comparison
             remote_modified_str = remote_meta.get("last_modified")
@@ -3157,17 +3160,22 @@ class MapWorldUpdater:
             log(f"Error checking for updates: {e}", None, "ERROR")
             return False, f"Error during update check: {str(e)}"
 
-    async def _get_local_file_etag(self, file_path: Path) -> str:
-        """Generates ETag-like hash for local file"""
+    def _load_stored_etag(self) -> str:
+        """Loads the remote ETag stored after the last successful download"""
         try:
-            hasher = hashlib.md5()
-            with open(file_path, 'rb') as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hasher.update(chunk)
-            return hasher.hexdigest()
+            if self.config.etag_file.exists():
+                return self.config.etag_file.read_text().strip()
+        except Exception:
+            pass
+        return ""
+
+    def _save_stored_etag(self, etag: str):
+        """Saves the remote ETag after a successful download"""
+        try:
+            self.config.etag_file.parent.mkdir(parents=True, exist_ok=True)
+            self.config.etag_file.write_text(etag)
         except Exception as e:
-            log(f"Error generating local file hash: {e}", None, "ERROR")
-            return ""
+            log(f"Could not save ETag: {e}", None, "WARNING")
 
     async def download_mapworld(self, progress_callback=None, force_version: str = None) -> Tuple[bool, Optional[Path]]:
         """Async download with improved version detection"""
@@ -3203,21 +3211,23 @@ class MapWorldUpdater:
                         log(f"Could not get version from headers: {e}", None, "DEBUG")
                 
                 # Download the file
+                download_etag = None
                 async with client.stream(
-                    "GET", 
-                    self.config.download_url, 
+                    "GET",
+                    self.config.download_url,
                     timeout=self.config.download_timeout
                 ) as response:
                     response.raise_for_status()
-                    
+                    download_etag = response.headers.get("etag", "").strip('"') or None
+
                     total_size = int(response.headers.get("content-length", 0))
                     downloaded = 0
-                    
+
                     with open(temp_path, "wb") as f:
                         async for chunk in response.aiter_bytes(chunk_size=8192):
                             f.write(chunk)
                             downloaded += len(chunk)
-                            
+
                             if progress_callback and total_size > 0:
                                 progress = (downloaded / total_size) * 100
                                 await progress_callback(progress)
@@ -3292,6 +3302,8 @@ class MapWorldUpdater:
                     temp_path.unlink()
                     if backup_path and backup_path.exists():
                         backup_path.unlink()
+                    if download_etag:
+                        self._save_stored_etag(download_etag)
                     return True, final_path
                 else:
                     log(f"Same version but different size, updating file", None, "INFO")
@@ -3310,6 +3322,8 @@ class MapWorldUpdater:
                 backup_path.unlink()
                 log("Removed backup file after successful download", None, "DEBUG")
             
+            if download_etag:
+                self._save_stored_etag(download_etag)
             await self._notify_update_downloaded("MapWorld", version_name)
             return True, final_path
             
