@@ -1413,6 +1413,103 @@ def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error writing token to device: {str(e)}"
 
+def write_device_furtif_config(device_id: str, config_updates: dict) -> Tuple[bool, str]:
+    """
+    Writes Rotom/Furtif config fields to the MapWorld config on the device.
+    ONLY works with valid JSON config files.
+    If the config is invalid JSON, it will be DELETED so MapWorld creates a fresh one.
+
+    Args:
+        device_id: Device identifier
+        config_updates: Dict of fields to update in the device config
+
+    Returns:
+        Tuple[bool, str]: (success, error_message)
+        Special error: "INVALID_CONFIG_DELETED" means the config was deleted and needs recreation
+    """
+    device_id = format_device_id(device_id)
+    config_path = "/data/data/com.github.furtif.furtifformaps/files/config.json"
+
+    try:
+        read_cmd = f'adb -s {device_id} shell "su -c \'base64 {config_path}\'"'
+        result = subprocess.run(read_cmd, shell=True, capture_output=True, text=True, timeout=10)
+
+        if result.returncode != 0 or not result.stdout:
+            return False, f"Could not read config from device: {result.stderr}"
+
+        try:
+            raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8').strip()
+        except Exception as decode_err:
+            log(f"Base64 decode failed, falling back to raw output: {decode_err}", device_id, "CONFIG")
+            raw_output = result.stdout.strip()
+
+        if not raw_output or '{' not in raw_output:
+            return False, "Config file is empty or invalid"
+
+        json_start = raw_output.find('{')
+        json_end = raw_output.rfind('}')
+
+        if json_start == -1 or json_end == -1:
+            return False, "Could not find JSON boundaries in config"
+
+        config_content = raw_output[json_start:json_end + 1]
+
+        try:
+            device_config = json.loads(config_content)
+            log("Config parsed as valid JSON", device_id, "CONFIG")
+        except json.JSONDecodeError as e:
+            log(f"Config is NOT valid JSON: {e}", device_id, "ERROR")
+            log("DELETING invalid config - MapWorld must create a new one", device_id, "CONFIG")
+            delete_cmd = f'adb -s {device_id} shell "su -c \'rm -f {config_path}\'"'
+            delete_result = subprocess.run(delete_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if delete_result.returncode == 0:
+                log("Invalid config file deleted successfully", device_id, "CONFIG")
+                return False, "INVALID_CONFIG_DELETED"
+            else:
+                return False, f"Config is invalid JSON and could not be deleted: {delete_result.stderr}"
+
+        device_config.update(config_updates)
+
+        new_content = json.dumps(device_config, ensure_ascii=True)
+
+        try:
+            verify = json.loads(new_content)
+            log(f"Output verified: valid JSON with {len(verify)} keys", device_id, "CONFIG")
+        except json.JSONDecodeError as e:
+            return False, f"Safety check failed: Output is not valid JSON: {e}"
+
+        temp_local = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
+        try:
+            temp_local.write(new_content)
+            temp_local.close()
+
+            temp_remote = "/data/local/tmp/mapworld_config_temp.json"
+            push_cmd = f'adb -s {device_id} push "{temp_local.name}" {temp_remote}'
+            push_result = subprocess.run(push_cmd, shell=True, capture_output=True, text=True, timeout=10)
+
+            if push_result.returncode != 0:
+                return False, f"Failed to push config to device: {push_result.stderr}"
+
+            move_cmd = f'adb -s {device_id} shell "su -c \'cp {temp_remote} {config_path} && chmod 660 {config_path} && rm -f {temp_remote}\'"'
+            move_result = subprocess.run(move_cmd, shell=True, capture_output=True, text=True, timeout=10)
+
+            if move_result.returncode != 0:
+                return False, f"Failed to move config on device: {move_result.stderr}"
+
+            log("Successfully wrote Rotom config to device", device_id, "CONFIG")
+            return True, ""
+
+        finally:
+            try:
+                os.unlink(temp_local.name)
+            except:
+                pass
+
+    except subprocess.TimeoutExpired:
+        return False, "Timeout while writing to device"
+    except Exception as e:
+        return False, f"Error writing config to device: {str(e)}"
+
 async def ensure_device_token(device_id: str, max_retries: int = 3) -> Tuple[bool, str, dict]:
     """
     Ensures the device has the correct DiscordData token before starting MapWorld.
@@ -5675,6 +5772,76 @@ async def save_device_token(request: Request, device_token: str = Form("")):
         return RedirectResponse(url="/settings?success=Device token validated and saved successfully", status_code=302)
     else:
         return RedirectResponse(url="/settings?success=Device token cleared", status_code=302)
+
+@app.post("/devices/save-rotom-config", response_class=HTMLResponse)
+def save_device_rotom_config(
+    request: Request,
+    device_ip: str = Form(""),
+    IsRotomMode: str = Form("off"),
+    RotomSecret: str = Form(""),
+    RotomURL: str = Form(""),
+    RotomDeviceName: str = Form(""),
+    RotomDelayLoader: int = Form(3),
+    RotomMaxWorkers: int = Form(60),
+    RotomTryAutoStart: str = Form("off"),
+    RotomRpcJailMode: str = Form("off"),
+    RotomCheckPgoForced: str = Form("off"),
+    RotomUsesCmds: str = Form("off"),
+    RotomIgnoreUnity: str = Form("off"),
+    RotomIgnoreDelays: str = Form("off"),
+    RotomUseRealPublicIp: str = Form("off"),
+    PackageName: str = Form("com.nianticlabs.pokemongo"),
+):
+    if redirect := require_login(request):
+        return redirect
+
+    # Server-side validation
+    RotomDelayLoader = max(3, min(30, RotomDelayLoader))
+    RotomMaxWorkers = max(1, min(250, RotomMaxWorkers))
+    if PackageName not in ("com.nianticlabs.pokemongo", "com.nianticlabs.pokemongo.ares"):
+        PackageName = "com.nianticlabs.pokemongo"
+
+    config = load_config()
+    target_device = None
+    for device in config.get("devices", []):
+        if device["ip"] == device_ip:
+            target_device = device
+            break
+
+    if not target_device:
+        return RedirectResponse(url="/settings?error=Device not found", status_code=302)
+
+    rotom_fields = {
+        "IsRotomMode": IsRotomMode == "on",
+        "RotomSecret": RotomSecret,
+        "RotomURL": RotomURL,
+        "RotomDeviceName": RotomDeviceName,
+        "RotomDelayLoader": RotomDelayLoader,
+        "RotomMaxWorkers": RotomMaxWorkers,
+        "RotomTryAutoStart": RotomTryAutoStart == "on",
+        "RotomRpcJailMode": RotomRpcJailMode == "on",
+        "RotomCheckPgoForced": RotomCheckPgoForced == "on",
+        "RotomUsesCmds": RotomUsesCmds == "on",
+        "RotomIgnoreUnity": RotomIgnoreUnity == "on",
+        "RotomIgnoreDelays": RotomIgnoreDelays == "on",
+        "RotomUseRealPublicIp": RotomUseRealPublicIp == "on",
+        "PackageName": PackageName,
+    }
+
+    if "furtif_config" not in target_device:
+        target_device["furtif_config"] = {}
+    target_device["furtif_config"].update(rotom_fields)
+
+    save_config(config)
+    log(f"Rotom config saved for device {device_ip}", None, "CONFIG")
+
+    success, error_msg = write_device_furtif_config(device_ip, rotom_fields)
+    if success:
+        return RedirectResponse(url="/settings?success=Rotom config saved and pushed to device", status_code=302)
+    else:
+        log(f"Failed to push rotom config to device {device_ip}: {error_msg}", None, "ERROR")
+        encoded_error = error_msg.replace("&", "%26").replace("=", "%3D")
+        return RedirectResponse(url=f"/settings?success=Rotom config saved (ADB push failed: {encoded_error})", status_code=302)
 
 @app.post("/devices/add")
 async def add_device(request: Request, new_ip: str = Form(...)):
