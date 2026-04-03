@@ -5823,6 +5823,28 @@ async def save_device_token(request: Request, device_token: str = Form("")):
     else:
         return RedirectResponse(url="/settings?success=Device token cleared", status_code=302)
 
+@app.get("/devices/rotom-config")
+def get_device_rotom_config(request: Request, ip: str = ""):
+    """Returns the current Rotom/Furtif config for a device.
+    Reads live from the device via ADB; falls back to the stored config on error."""
+    if require_login(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    config = load_config()
+    target_device = next((d for d in config.get("devices", []) if d["ip"] == ip), None)
+    if not target_device:
+        return JSONResponse({"error": "Device not found"}, status_code=404)
+
+    live_config = read_device_furtif_config(ip)
+    if live_config:
+        if "furtif_config" not in target_device:
+            target_device["furtif_config"] = {}
+        target_device["furtif_config"].update(live_config)
+        save_config(config)
+        return JSONResponse(live_config)
+
+    return JSONResponse(target_device.get("furtif_config", {}))
+
 @app.post("/devices/save-rotom-config", response_class=HTMLResponse)
 def save_device_rotom_config(
     request: Request,
