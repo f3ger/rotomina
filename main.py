@@ -1230,72 +1230,122 @@ def format_device_id(device_id: str) -> str:
 def read_device_furtif_config(device_id: str) -> dict:
     """
     Reads the Furtif/Map World config from the device and extracts
-    all relevant settings using regex (works with both JSON and JS object format).
-    
+    all relevant settings. Prefers JSON parsing; falls back to regex
+    for non-JSON formats (works with both JSON and JS object format).
+
     Args:
         device_id: Device identifier
-        
+
     Returns:
         dict: Dictionary containing the extracted config settings, empty dict on error
     """
     device_id = format_device_id(device_id)
     furtif_config = {}
-    
+
     try:
         cmd = f'adb -s {device_id} shell "su -c \'base64 /data/data/com.github.furtif.furtifformaps/files/config.json\'"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
 
-        if result.returncode == 0 and result.stdout:
-            try:
-                raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8').strip()
-            except Exception as decode_err:
-                log(f"Base64 decode failed, falling back to raw output: {decode_err}", device_id, "CONFIG")
-                raw_output = result.stdout.strip()
-            
-            # Use regex to extract values (works with both JSON and JS object format)
-            # Extract DiscordData - matches both quoted and unquoted values
-            discord_match = re.search(r'DiscordData["\s]*:["\s]*([^,}\s]+)', raw_output)
-            if discord_match:
-                furtif_config["DiscordData"] = discord_match.group(1).strip().strip('"')
-            else:
-                furtif_config["DiscordData"] = ""
-            
-            # Extract RotomTryAutoStart
-            autostart_match = re.search(r'RotomTryAutoStart["\s]*:["\s]*(true|false)', raw_output, re.IGNORECASE)
-            if autostart_match:
-                furtif_config["RotomTryAutoStart"] = autostart_match.group(1).lower() == "true"
-            else:
-                furtif_config["RotomTryAutoStart"] = False
-            
-            # Extract RotomDeviceName
-            name_match = re.search(r'RotomDeviceName["\s]*:["\s]*([^,}\s]+)', raw_output)
-            if name_match:
-                furtif_config["RotomDeviceName"] = name_match.group(1).strip().strip('"')
-            
-            # Extract IsRotomMode
-            rotom_mode_match = re.search(r'IsRotomMode["\s]*:["\s]*(true|false)', raw_output, re.IGNORECASE)
-            if rotom_mode_match:
-                furtif_config["IsRotomMode"] = rotom_mode_match.group(1).lower() == "true"
-            else:
-                furtif_config["IsRotomMode"] = False
-            
-            # Extract PackageName
-            package_match = re.search(r'PackageName["\s]*:["\s]*([^,}\s]+)', raw_output)
-            if package_match:
-                furtif_config["PackageName"] = package_match.group(1).strip().strip('"')
-            else:
-                furtif_config["PackageName"] = "com.nianticlabs.pokemongo"
-            
-            log(f"Furtif config: RotomTryAutoStart={furtif_config.get('RotomTryAutoStart', False)}, DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}", device_id, "CONFIG")
-                
-        else:
+        if not (result.returncode == 0 and result.stdout):
             log(f"Could not read Furtif config.json (returncode={result.returncode})", device_id, "CONFIG")
-            
+            return furtif_config
+
+        try:
+            raw_output = base64.b64decode(result.stdout.strip()).decode('utf-8').strip()
+        except Exception as decode_err:
+            log(f"Base64 decode failed, falling back to raw output: {decode_err}", device_id, "CONFIG")
+            raw_output = result.stdout.strip()
+
+        # --- Attempt 1: parse as valid JSON ---
+        json_start = raw_output.find('{')
+        json_end = raw_output.rfind('}')
+        parsed = None
+        if json_start != -1 and json_end != -1:
+            try:
+                parsed = json.loads(raw_output[json_start:json_end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        if parsed is not None:
+            # Boolean fields
+            for bool_key, default in [
+                ("IsRotomMode", False),
+                ("RotomRpcJailMode", False),
+                ("RotomTryAutoStart", False),
+                ("RotomCheckPgoForced", False),
+                ("RotomUsesCmds", False),
+                ("RotomIgnoreUnity", False),
+                ("RotomIgnoreDelays", False),
+                ("RotomUseRealPublicIp", False),
+            ]:
+                furtif_config[bool_key] = bool(parsed.get(bool_key, default))
+
+            # Integer fields
+            for int_key, default in [("RotomDelayLoader", 3), ("RotomMaxWorkers", 60)]:
+                try:
+                    furtif_config[int_key] = int(parsed.get(int_key, default))
+                except (TypeError, ValueError):
+                    furtif_config[int_key] = default
+
+            # String fields
+            furtif_config["DiscordData"] = str(parsed.get("DiscordData", ""))
+            furtif_config["RotomSecret"] = str(parsed.get("RotomSecret", ""))
+            furtif_config["RotomURL"] = str(parsed.get("RotomURL", ""))
+            furtif_config["RotomDeviceName"] = str(parsed.get("RotomDeviceName", ""))
+            pkg = str(parsed.get("PackageName", "com.nianticlabs.pokemongo"))
+            furtif_config["PackageName"] = pkg if pkg in (
+                "com.nianticlabs.pokemongo", "com.nianticlabs.pokemongo.ares"
+            ) else "com.nianticlabs.pokemongo"
+
+        else:
+            # --- Attempt 2: regex fallback for non-JSON formats ---
+            def _bool(key, default=False):
+                m = re.search(rf'{key}["\s]*:["\s]*(true|false)', raw_output, re.IGNORECASE)
+                return m.group(1).lower() == "true" if m else default
+
+            def _str_quoted(key, default=""):
+                m = re.search(rf'{key}["\s]*:\s*"([^"]*)"', raw_output)
+                return m.group(1) if m else default
+
+            def _str_bare(key, default=""):
+                m = re.search(rf'{key}["\s]*:["\s]*([^,}}\s]+)', raw_output)
+                return m.group(1).strip().strip('"') if m else default
+
+            def _int(key, default):
+                m = re.search(rf'{key}["\s]*:["\s]*(\d+)', raw_output)
+                return int(m.group(1)) if m else default
+
+            furtif_config["IsRotomMode"] = _bool("IsRotomMode")
+            furtif_config["RotomRpcJailMode"] = _bool("RotomRpcJailMode")
+            furtif_config["RotomTryAutoStart"] = _bool("RotomTryAutoStart")
+            furtif_config["RotomCheckPgoForced"] = _bool("RotomCheckPgoForced")
+            furtif_config["RotomUsesCmds"] = _bool("RotomUsesCmds")
+            furtif_config["RotomIgnoreUnity"] = _bool("RotomIgnoreUnity")
+            furtif_config["RotomIgnoreDelays"] = _bool("RotomIgnoreDelays")
+            furtif_config["RotomUseRealPublicIp"] = _bool("RotomUseRealPublicIp")
+            furtif_config["RotomDelayLoader"] = _int("RotomDelayLoader", 3)
+            furtif_config["RotomMaxWorkers"] = _int("RotomMaxWorkers", 60)
+            furtif_config["DiscordData"] = _str_bare("DiscordData", "")
+            furtif_config["RotomSecret"] = _str_quoted("RotomSecret", "")
+            furtif_config["RotomURL"] = _str_quoted("RotomURL", "")
+            furtif_config["RotomDeviceName"] = _str_bare("RotomDeviceName", "")
+            pkg = _str_bare("PackageName", "com.nianticlabs.pokemongo")
+            furtif_config["PackageName"] = pkg if pkg in (
+                "com.nianticlabs.pokemongo", "com.nianticlabs.pokemongo.ares"
+            ) else "com.nianticlabs.pokemongo"
+
+        log(
+            f"Furtif config read: RotomURL={furtif_config.get('RotomURL')!r}, "
+            f"RotomDelayLoader={furtif_config.get('RotomDelayLoader')}, "
+            f"DiscordData={'present' if furtif_config.get('DiscordData') else 'empty'}",
+            device_id, "CONFIG"
+        )
+
     except subprocess.TimeoutExpired:
         log("Timeout reading Furtif config.json", device_id, "ERROR")
     except Exception as e:
         log(f"Error reading Furtif config: {e}", device_id, "ERROR")
-    
+
     return furtif_config
 
 def write_device_discord_token(device_id: str, token: str) -> Tuple[bool, str]:
