@@ -5578,7 +5578,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     log(f"Unknown WebSocket message: {message}", None, "DEBUG")
                     
                     # Refresh specific device data
-                    device_ip = data.split(":", 1)[1]
+                    device_ip = message.split(":", 1)[1]
                     if device_ip:
                         # Force version refresh for this device
                         version_manager.mark_for_refresh(device_ip)
