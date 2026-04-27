@@ -355,7 +355,8 @@ class VersionManager:
         try:
             # Try PoGo version
             try:
-                pogo_cmd = f'adb -s {device_id} shell "dumpsys package com.nianticlabs.pokemongo | grep versionName"'
+                pogo_package = get_device_package_name(device_id)
+                pogo_cmd = f'adb -s {device_id} shell "dumpsys package {pogo_package} | grep versionName"'
                 pogo_result = subprocess.run(pogo_cmd, shell=True, capture_output=True, text=True, timeout=TimeoutConfig.MEDIUM)
                 if pogo_result.returncode == 0 and pogo_result.stdout:
                     pogo_match = re.search(r'versionName=(\d+\.\d+\.\d+)', pogo_result.stdout)
@@ -1227,6 +1228,30 @@ def format_device_id(device_id: str) -> str:
     
     return device_id
 
+def get_device_package_name(device_id: str) -> str:
+    """
+    Gets the Pokemon GO package name for the device from its Furtif config.
+    Falls back to default if config is not available.
+    
+    Args:
+        device_id: Device identifier
+        
+    Returns:
+        str: The package name (either com.nianticlabs.pokemongo or com.nianticlabs.pokemongo.ares)
+    """
+    try:
+        furtif_config = read_device_furtif_config(device_id)
+        pkg = furtif_config.get("PackageName", "com.nianticlabs.pokemongo")
+        
+        # Validate package name is one of the supported options
+        if pkg in ("com.nianticlabs.pokemongo", "com.nianticlabs.pokemongo.ares"):
+            return pkg
+        else:
+            return "com.nianticlabs.pokemongo"
+    except Exception as e:
+        log(f"Error getting device package name, using default: {str(e)}", device_id, "CONFIG")
+        return "com.nianticlabs.pokemongo"
+
 def read_device_furtif_config(device_id: str) -> dict:
     """
     Reads the Furtif/Map World config from the device and extracts
@@ -1871,7 +1896,8 @@ async def stop_apps(device_id: str, stop_pogo: bool = True, stop_mapworld: bool 
     if stop_mapworld:
         commands.append("am force-stop com.github.furtif.furtifformaps")
     if stop_pogo:
-        commands.append("am force-stop com.nianticlabs.pokemongo")
+        pogo_package = get_device_package_name(device_id)
+        commands.append(f"am force-stop {pogo_package}")
 
     if not commands:
         return True
@@ -2092,7 +2118,8 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
 
         async def check_apps_running():
             """Checks if both PoGo and MapWorld are running"""
-            check_cmd = 'pidof com.nianticlabs.pokemongo; echo "---SEPARATOR---"; pidof com.github.furtif.furtifformaps'
+            pogo_package = get_device_package_name(device_id)
+            check_cmd = f'pidof {pogo_package}; echo "---SEPARATOR---"; pidof com.github.furtif.furtifformaps'
             result = adb_pool.execute_command(device_id, ["adb", "shell", check_cmd])
 
             sections = result.stdout.split("---SEPARATOR---")
@@ -2464,7 +2491,8 @@ async def clear_app_cache(device_id: str) -> bool:
             return False
         
         # Clear app data and cache
-        clear_cmd = "pm clear com.nianticlabs.pokemongo"
+        pogo_package = get_device_package_name(device_id)
+        clear_cmd = f"pm clear {pogo_package}"
         result = adb_pool.execute_command(
             device_id,
             ["adb", "shell", clear_cmd]
@@ -2501,7 +2529,8 @@ async def uninstall_pogo(device_id: str) -> bool:
             return False
         
         # Uninstall the app
-        uninstall_cmd = "pm uninstall com.nianticlabs.pokemongo"
+        pogo_package = get_device_package_name(device_id)
+        uninstall_cmd = f"pm uninstall {pogo_package}"
         result = adb_pool.execute_command(
             device_id,
             ["adb", "shell", uninstall_cmd]
