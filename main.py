@@ -1061,6 +1061,8 @@ async def validate_device_token(token: str, bypass_cache: bool = False) -> Tuple
 
                 success = result.get("success", False)
                 message = result.get("message", "Unknown response")
+                # Optional: If the API returns specific access levels or device tokens, they can be handled here (added in 3.00+)
+                # device_token = result.get("device_token", None)
 
                 # Cache the result
                 _token_validation_cache[token_stripped] = (success, message, time.time())
