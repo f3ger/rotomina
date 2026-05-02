@@ -672,22 +672,37 @@
         </div>
         <div class="p-6">
             <p class="text-sm text-gray-400 mb-4">
-                Upload a .apkm file manually when a version is not available on the Unown mirror.
+                Upload a .apkm (Google) or .apk (Samsung) file manually when a version is not available on the mirror.
                 The uploaded APK will be available for installation on all devices.
             </p>
 
+            <!-- APK Type Selector -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-300 mb-2">APK Type</label>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="google" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Google (G) - .apkm</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="samsung" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Samsung (S) - .apk</span>
+                    </label>
+                </div>
+            </div>
+
             <!-- File input -->
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-300 mb-2">Select .apkm file</label>
+                <label class="block text-sm font-medium text-gray-300 mb-2" x-text="apkType === 'google' ? 'Select .apkm file (Google)' : 'Select .apk file (Samsung)'"></label>
                 <label class="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
                     :class="{ 'border-blue-500 bg-blue-900/20': selectedFile }">
-                    <input type="file" accept=".apkm" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
+                    <input type="file" :accept="apkType === 'google' ? '.apkm' : '.apk'" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
                     <div class="text-center">
                         <svg class="mx-auto h-8 w-8 text-gray-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
-                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : 'Click to select .apkm file'"></span>
+                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : (apkType === 'google' ? 'Click to select .apkm file' : 'Click to select .apk file')"></span>
                     </div>
                 </label>
             </div>
@@ -753,12 +768,15 @@
 
             <!-- Locally available versions -->
             <div class="mt-6 border-t border-gray-700 pt-4">
-                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions</h4>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions (All Types)</h4>
                 <div x-show="localVersions.length === 0" class="text-sm text-gray-500">No locally stored APK versions found.</div>
                 <div x-show="localVersions.length > 0" class="space-y-1">
-                    <template x-for="v in localVersions" :key="v.version">
+                    <template x-for="v in localVersions" :key="v.version + '-' + (v.apk_type || 'google')">
                         <div class="flex items-center justify-between text-sm bg-gray-800/40 border border-gray-700 rounded px-3 py-2">
-                            <span class="text-gray-300" x-text="v.version"></span>
+                            <span class="text-gray-300 flex items-center gap-2">
+                                <span x-text="v.version"></span>
+                                <span class="text-xs px-1.5 py-0.5 rounded" :class="v.type_label === 'S' ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'" x-text="v.type_label || 'G'"></span>
+                            </span>
                             <span class="text-gray-500 text-xs" x-text="v.size_mb + ' MB'"></span>
                         </div>
                     </template>
@@ -1271,6 +1289,7 @@
             uploadError: null,
             uploadMessage: '',
             localVersions: [],
+            apkType: 'google',
 
             init() {
                 this.loadLocalVersions();
@@ -1280,12 +1299,30 @@
                 const file = event.target.files[0];
                 if (!file) { this.selectedFile = null; return; }
 
-                if (!file.name.toLowerCase().endsWith('.apkm')) {
-                    this.uploadError = 'Only .apkm files are accepted';
+                const fileName = file.name.toLowerCase();
+                const isApkm = fileName.endsWith('.apkm');
+                const isApk = fileName.endsWith('.apk');
+
+                // Validate based on selected type
+                if (this.apkType === 'google' && !isApkm) {
+                    this.uploadError = 'For Google type, only .apkm files are accepted';
                     this.selectedFile = null;
                     event.target.value = '';
                     return;
                 }
+                if (this.apkType === 'samsung' && !isApk) {
+                    this.uploadError = 'For Samsung type, only .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+                if (!isApkm && !isApk) {
+                    this.uploadError = 'Only .apkm or .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+
                 if (file.size > 300 * 1024 * 1024) {
                     this.uploadError = 'File is too large. Maximum size is 300MB.';
                     this.selectedFile = null;
@@ -1360,7 +1397,8 @@
 
             async loadLocalVersions() {
                 try {
-                    const res = await fetch('/api/pogo-local-versions');
+                    // Load all versions (both Google and Samsung)
+                    const res = await fetch(`/api/pogo-local-versions?apk_type=all`);
                     const data = await res.json();
                     this.localVersions = data.versions || [];
                 } catch (e) {

@@ -4,7 +4,8 @@
 <div x-data="statusPage()" x-init="init()" x-cloak data-pogo-latest="{{ pogo_latest }}"
     data-pogo-previous="{{ pogo_previous }}"
     data-pogo-auto-update-enabled="{% if config.pogo_auto_update_enabled %}true{% else %}false{% endif %}"
-    data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}">
+    data-pif-auto-update-enabled="{% if config.pif_auto_update_enabled %}true{% else %}false{% endif %}"
+    data-apk-type="{{ apk_type }}">
     <!-- Header with status information -->
     <div class="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mb-6">
         <div class="min-w-0">
@@ -27,9 +28,28 @@
         </div>
 
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-3">
+            <!-- APK Type Selector with Version -->
+            <div class="relative flex items-center gap-2">
+                <select x-model="apkType" @change="changeApkType()"
+                    class="appearance-none border text-white text-sm rounded-md px-3 py-2 pr-8 focus:outline-none focus:ring-2 focus:border-blue-500"
+                    :class="apkType === 'google' ? 'bg-blue-900/50 border-blue-600 focus:ring-blue-500' : 'bg-purple-900/50 border-purple-600 focus:ring-purple-500'">
+                    <option value="google">Google (G) - .apkm</option>
+                    <option value="samsung">Samsung (S) - .apk</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-8 flex items-center px-2 text-gray-400">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+                <!-- Type Badge with Version -->
+                <span class="px-2 py-1 rounded text-xs font-bold whitespace-nowrap"
+                    :class="apkType === 'google' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'"
+                    x-text="(apkType === 'google' ? 'G' : 'S') + ' ' + pogoLatest"></span>
+            </div>
+
             <button type="button" @click="pogoUpdateAll()"
                 class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                <span>PoGo Update All (<span x-text="pogoLatest"></span>)</span>
+                <span>PoGo Update All</span>
             </button>
 
             <button type="button" @click="refreshData()"
@@ -84,7 +104,7 @@
                 <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
                         <div class="text-xs text-gray-400">PoGo</div>
-                        <div class="text-gray-200" x-text="device.pogo"></div>
+                        <div class="text-gray-200 text-sm" x-text="(apkType === 'google' ? 'G ' : 'S ') + device.pogo"></div>
                     </div>
                     <div class="bg-gray-900/40 border border-gray-800 rounded px-3 py-2">
                         <div class="text-xs text-gray-400">MITM</div>
@@ -131,12 +151,23 @@
                         <div x-show="open" @click.away="open = false"
                             class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-1 divide-y divide-gray-700">
-                                <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
-                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                    x-text="pogoLatest"></button>
-                                <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
-                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                    x-text="pogoPrevious"></button>
+                                <!-- Google versions -->
+                                <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoLatest)"
+                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                    <span x-text="'G ' + pogoLatest"></span>
+                                    <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
+                                </button>
+                                <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoPrevious)"
+                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                    <span x-text="'G ' + pogoPrevious"></span>
+                                    <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
+                                </button>
+                                <!-- Samsung version (latest only) -->
+                                <button type="button" @click="apkType = 'samsung'; updateDevicePogo(device.ip, pogoLatest)"
+                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                    <span x-text="'S ' + pogoLatest"></span>
+                                    <span class="text-xs px-1.5 py-0.5 rounded bg-purple-600 text-white">Samsung</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -398,7 +429,8 @@
                                     :class="device.control_enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-800 text-gray-400'"
                                     x-text="device.control_enabled ? 'Active' : 'Inactive'"></span>
                             </td>
-                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300" x-text="device.pogo">
+                            <td class="px-4 sm:px-6 py-4 whitespace-nowrap text-gray-300"
+                                x-text="(apkType === 'google' ? 'G ' : 'S ') + device.pogo">
                             </td>
                             <td class="hidden xl:table-cell px-4 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-300"
                                 x-text="device.mitm"></td>
@@ -421,12 +453,23 @@
                                     <div x-show="open" @click.away="open = false"
                                         class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-1 divide-y divide-gray-700">
-                                            <button type="button" @click="updateDevicePogo(device.ip, pogoLatest)"
-                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                                x-text="pogoLatest"></button>
-                                            <button type="button" @click="updateDevicePogo(device.ip, pogoPrevious)"
-                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left"
-                                                x-text="pogoPrevious"></button>
+                                            <!-- Google versions -->
+                                            <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoLatest)"
+                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                                <span x-text="'G ' + pogoLatest"></span>
+                                                <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
+                                            </button>
+                                            <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoPrevious)"
+                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                                <span x-text="'G ' + pogoPrevious"></span>
+                                                <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
+                                            </button>
+                                            <!-- Samsung version (latest only) -->
+                                            <button type="button" @click="apkType = 'samsung'; updateDevicePogo(device.ip, pogoLatest)"
+                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                                <span x-text="'S ' + pogoLatest"></span>
+                                                <span class="text-xs px-1.5 py-0.5 rounded bg-purple-600 text-white">Samsung</span>
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -565,6 +608,7 @@
             pogoPrevious: "N/A",
             pogoAutoUpdateEnabled: false,
             pifAutoUpdateEnabled: false,
+            apkType: 'google',
             lastUpdated: new Date().toLocaleTimeString(),
             isRefreshing: false,
             showUpdateModal: false,
@@ -597,6 +641,7 @@
                         this.pogoPrevious = el.dataset.pogoPrevious || this.pogoPrevious;
                         this.pogoAutoUpdateEnabled = el.dataset.pogoAutoUpdateEnabled === 'true';
                         this.pifAutoUpdateEnabled = el.dataset.pifAutoUpdateEnabled === 'true';
+                        this.apkType = el.dataset.apkType || 'google';
                     }
                 } catch (e) {
                     console.error('Error initializing status page data:', e);
@@ -717,12 +762,20 @@
                 }
             },
 
+            // Change APK type and reload page with new type
+            changeApkType() {
+                // Navigate to same page with new apk_type parameter
+                const url = new URL(window.location);
+                url.searchParams.set('apk_type', this.apkType);
+                window.location.href = url.toString();
+            },
+
             // Refresh data using AJAX
             refreshData() {
                 this.isRefreshing = true;
                 const startTime = Date.now();
 
-                fetch('/api/status')
+                fetch(`/api/status?apk_type=${this.apkType}`)
                     .then(response => response.json())
                     .then(data => {
                         this.updateData(data);
@@ -751,6 +804,10 @@
                 this.pogoPrevious = data.pogo_previous || "N/A";
                 this.pogoAutoUpdateEnabled = data.pogo_auto_update_enabled;
                 this.pifAutoUpdateEnabled = data.pif_auto_update_enabled;
+                // Preserve current apkType from server response or keep current
+                if (data.apk_type && data.apk_type !== this.apkType) {
+                    this.apkType = data.apk_type;
+                }
                 this.lastUpdated = new Date().toLocaleTimeString();
 
                 // Update sort
@@ -958,6 +1015,7 @@
                 this.showUpdateModal = true;
 
                 const formData = new FormData();
+                formData.append('apk_type', this.apkType);
 
                 fetch('/pogo/update', {
                     method: 'POST',
@@ -986,6 +1044,7 @@
                 const formData = new FormData();
                 formData.append('device_ip', deviceIp);
                 formData.append('version', version);
+                formData.append('apk_type', this.apkType);
 
                 fetch('/pogo/device-update', {
                     method: 'POST',

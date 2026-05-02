@@ -42,7 +42,8 @@ from contextlib import asynccontextmanager
 # Global Configuration
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "config.json"
-APK_DIR = BASE_DIR / "data" / "apks" / "pogo"
+APK_DIR = BASE_DIR / "data" / "apks" / "pogo"  # Google/APKM
+S_APK_DIR = BASE_DIR / "data" / "apks" / "s-pogo"  # Samsung/APK
 EXTRACT_DIR = APK_DIR / "extracted"
 POGO_MIRROR_URL = "https://mirror.unownhash.com"
 DEFAULT_ARCH = "arm64-v8a"
@@ -2337,9 +2338,8 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
     
     return processed
 
-# APK Management with multiple sources
-@ttl_cache(ttl=3600)
-def get_available_versions() -> Dict:
+def get_available_google_versions() -> List[Dict]:
+    """Get Google/APKM versions from configured sources and local files"""
     processed = []
     seen_versions = set()
     
@@ -2362,15 +2362,23 @@ def get_available_versions() -> Dict:
             if mirror_url:
                 log(f"Fetching PoGO versions from mirror: {source_name}", None, "API")
                 versions = fetch_pogo_from_mirror(mirror_url, seen_versions)
+                # Tag as Google versions
+                for v in versions:
+                    v["apk_type"] = "google"
+                    v["type_label"] = "G"
                 processed.extend(versions)
         elif source_type == "github":
             repo = source.get("repo", "")
             if repo:
                 log(f"Fetching PoGO versions from GitHub: {source_name}", None, "API")
                 versions = fetch_pogo_from_github(repo, source_name, seen_versions)
+                # Tag as Google versions
+                for v in versions:
+                    v["apk_type"] = "google"
+                    v["type_label"] = "G"
                 processed.extend(versions)
     
-    # 2. Include locally available APKs not already in the list
+    # 2. Include locally available APKM files
     try:
         if APK_DIR.exists():
             for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
@@ -2384,15 +2392,73 @@ def get_available_versions() -> Dict:
                             "url": "",
                             "date": "",
                             "arch": DEFAULT_ARCH,
-                            "source": "local"
+                            "source": "local",
+                            "apk_type": "google",
+                            "type_label": "G"
                         })
                         seen_versions.add(local_version)
     except Exception as e:
-        log(f"Error scanning local APKs: {str(e)}", None, "ERROR")
+        log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
+    
+    return processed
 
-    # 3. Sort all versions together, regardless of source
+def get_available_samsung_versions() -> List[Dict]:
+    """Get Samsung/APK versions from local S_APK_DIR"""
+    processed = []
+    seen_versions = set()
+    
+    # Scan local Samsung APK files
+    try:
+        if S_APK_DIR.exists():
+            for apk_file in S_APK_DIR.glob("com.nianticlabs.pokemongo_*.apk"):
+                # Pattern: com.nianticlabs.pokemongo_<arch>_<version>.apk
+                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apk', apk_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": apk_file.name,
+                            "url": "",
+                            "date": "",
+                            "arch": DEFAULT_ARCH,
+                            "source": "local",
+                            "apk_type": "samsung",
+                            "type_label": "S"
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local Samsung APK files: {str(e)}", None, "ERROR")
+    
+    return processed
+
+# APK Management with multiple sources
+@ttl_cache(ttl=3600)
+def get_available_versions(apk_type: str = "all") -> Dict:
+    """
+    Get available PoGO versions
+    
+    Args:
+        apk_type: "google" for APKM, "samsung" for APK, "all" for both
+    
+    Returns:
+        Dict with "latest" and "previous" versions
+    """
+    all_versions = []
+    
+    # Get Google versions if requested
+    if apk_type in ("all", "google"):
+        google_versions = get_available_google_versions()
+        all_versions.extend(google_versions)
+    
+    # Get Samsung versions if requested
+    if apk_type in ("all", "samsung"):
+        samsung_versions = get_available_samsung_versions()
+        all_versions.extend(samsung_versions)
+    
+    # Sort all versions together
     distinct_versions = sorted(
-        processed,
+        all_versions,
         key=lambda x: [int(n) for n in x["version"].split(".")],
         reverse=True
     )
@@ -2400,9 +2466,10 @@ def get_available_versions() -> Dict:
     if distinct_versions:
         latest_ver = distinct_versions[0]["version"]
         prev_ver = distinct_versions[1]["version"] if len(distinct_versions) > 1 else "N/A"
-        log(f"Found versions - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
+        type_info = f"[{apk_type}]" if apk_type != "all" else "[all]"
+        log(f"Found versions {type_info} - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
     else:
-        log("No versions found", None, "VERSION")
+        log(f"No versions found for type: {apk_type}", None, "VERSION")
 
     return {
         "latest": distinct_versions[0] if distinct_versions else {},
@@ -2413,13 +2480,22 @@ def download_apk(version_info: Dict) -> Path:
     try:
         log(f"Downloading {version_info['filename']}...", None, "UPDATE")
         response = httpx.get(version_info["url"], follow_redirects=True)
-        target_path = APK_DIR / version_info["filename"]
+        
+        # Determine target directory based on apk_type
+        apk_type = version_info.get("apk_type", "google")
+        if apk_type == "samsung":
+            target_dir = S_APK_DIR
+        else:
+            target_dir = APK_DIR
+        
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / version_info["filename"]
         
         with open(target_path, "wb") as f:
             f.write(response.content)
         
         get_available_versions.cache_clear()
-        log(f"Downloaded {version_info['version']}, cache cleared", None, "UPDATE")
+        log(f"Downloaded {version_info['version']} ({apk_type}), cache cleared", None, "UPDATE")
         
         return target_path
     except Exception as e:
@@ -2527,6 +2603,78 @@ def extract_pogo_version_from_apkm(apkm_path: Path) -> str:
     except Exception as e:
         log(f"Version extraction from APKM failed: {e}", None, "ERROR")
         raise
+
+# APK Installation Handler for both Google and Samsung
+async def install_apk_for_device(device_id: str, apk_path: Path, apk_type: str = "google") -> bool:
+    """
+    Installs APK based on type - handles both Google (.apkm extracted) and Samsung (.apk direct)
+    
+    Args:
+        device_id: Device identifier
+        apk_path: Path to APK file (for Samsung) or extract directory (for Google)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
+    
+    Returns:
+        bool: True if installation successful
+    """
+    try:
+        device_id = format_device_id(device_id)
+        
+        if apk_type == "samsung":
+            # Samsung: Direct .apk file installation
+            if not apk_path.exists():
+                log(f"Samsung APK not found: {apk_path}", device_id, "ERROR")
+                return False
+            
+            log(f"Installing Samsung APK: {apk_path.name}", device_id, "UPDATE")
+            result = adb_pool.execute_command(
+                device_id,
+                ["adb", "install", "-r", str(apk_path)]
+            )
+            
+            if result.returncode != 0:
+                log(f"Samsung APK installation failed: {result.stderr}", device_id, "ERROR")
+                return False
+            
+            log("Samsung APK installed successfully", device_id, "UPDATE")
+            return True
+        
+        else:
+            # Google: Extracted .apkm folder installation
+            if not apk_path.exists():
+                log(f"Google extract directory not found: {apk_path}", device_id, "ERROR")
+                return False
+            
+            # Find all APK files in the extract directory
+            apk_files = list(apk_path.glob("*.apk"))
+            if not apk_files:
+                log(f"No APK files found in {apk_path}", device_id, "ERROR")
+                return False
+            
+            log(f"Installing {len(apk_files)} Google APK(s) from {apk_path.name}", device_id, "UPDATE")
+            
+            if len(apk_files) == 1:
+                # Single APK
+                result = adb_pool.execute_command(
+                    device_id,
+                    ["adb", "install", "-r", str(apk_files[0])]
+                )
+            else:
+                # Multiple APKs (split APK)
+                cmd = ["adb", "-s", device_id, "install-multiple", "-r"]
+                cmd.extend([str(f) for f in apk_files])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode != 0:
+                log(f"Google APK installation failed: {result.stderr}", device_id, "ERROR")
+                return False
+            
+            log("Google APK installed successfully", device_id, "UPDATE")
+            return True
+            
+    except Exception as e:
+        log(f"APK installation error: {str(e)}", device_id, "ERROR")
+        return False
 
 # Optimized APK Installation
 async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[bool, str]:
@@ -2746,14 +2894,15 @@ async def reboot_and_wait(device_id: str) -> bool:
         log(f"Error during reboot: {str(e)}", device_id, "ERROR")
         return False
 
-async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> bool:
+async def optimized_perform_installation(device_ip: str, apk_path: Path, apk_type: str = "google") -> bool:
     """
     Optimized version of the full installation process with
     staged approach for handling storage issues.
     
     Args:
         device_ip: Device identifier
-        extract_dir: Directory containing extracted APK files
+        apk_path: Directory containing extracted APK files (Google) or path to .apk file (Samsung)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
         
     Returns:
         bool: True if the complete process was successful
@@ -2791,17 +2940,33 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                 clear_device_update_status(device_ip)
                 return False
 
-        # Find APK files
-        apk_files = list(extract_dir.glob("*.apk"))
-        if not apk_files:
-            log(f"No APK files found in {extract_dir}", device_ip, "ERROR")
-            clear_device_update_status(device_ip)
-            return False
+        # Validate APK path based on type
+        if apk_type == "samsung":
+            # Samsung: direct .apk file
+            if not apk_path.exists() or not apk_path.is_file():
+                log(f"Samsung APK file not found: {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
+        else:
+            # Google: extracted folder
+            if not apk_path.exists() or not apk_path.is_dir():
+                log(f"Google extract directory not found: {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
+            
+            apk_files = list(apk_path.glob("*.apk"))
+            if not apk_files:
+                log(f"No APK files found in {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
             
         update_progress(20)
         
-        # Extract version from directory
-        version = extract_dir.name
+        # Extract version from path
+        version = apk_path.stem if apk_type == "samsung" else apk_path.name
+        
+        # Get APK files for Google type
+        apk_files = list(apk_path.glob("*.apk")) if apk_type == "google" else [apk_path]
         
         # Try installation with progressive recovery strategies
         strategies = [
@@ -2812,8 +2977,11 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
             ("reboot_reinstall", reboot_and_wait, 55)
         ]
         
+        installation_success = False
+        error_msg = ""
+        
         for strategy_name, recovery_action, progress_target in strategies:
-            log(f"Attempting {strategy_name} installation", device_ip, "UPDATE")
+            log(f"Attempting {strategy_name} installation ({apk_type})", device_ip, "UPDATE")
             
             # Execute recovery action if needed
             if recovery_action:
@@ -2846,8 +3014,15 @@ async def optimized_perform_installation(device_ip: str, extract_dir: Path) -> b
                     log(f"Recovery action {strategy_name} failed", device_ip, "ERROR")
                     continue
             
-            # Try installation
-            installation_success, error_msg = await optimized_apk_installation(device_ip, apk_files)
+            # Try installation using the appropriate method
+            if apk_type == "samsung":
+                # Samsung: use new install_apk_for_device function
+                installation_success = await install_apk_for_device(device_ip, apk_path, "samsung")
+                error_msg = "SUCCESS" if installation_success else "INSTALLATION_ERROR"
+            else:
+                # Google: use existing optimized_apk_installation
+                installation_success, error_msg = await optimized_apk_installation(device_ip, apk_files)
+            
             update_progress(progress_target)
             
             if installation_success:
@@ -5212,10 +5387,15 @@ async def optimized_device_monitoring():
         await asyncio.sleep(monitoring_interval)
 
 # Installation Functions
-async def perform_installations(device_ips: List[str], extract_dir: Path):
+async def perform_installations(device_ips: List[str], apk_path: Path, apk_type: str = "google"):
     """
     Performs installations on multiple devices with progress tracking.
     Uses the optimized installation process.
+    
+    Args:
+        device_ips: List of device IPs to install on
+        apk_path: Path to APK file (Samsung) or extract directory (Google)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
     """
     global update_in_progress, current_progress
     
@@ -5231,10 +5411,10 @@ async def perform_installations(device_ips: List[str], extract_dir: Path):
                 end_progress = int(index * device_increment)
                 
                 update_progress(start_progress)
-                log(f"Update {index}/{total_devices} started", ip, "UPDATE")
+                log(f"Update {index}/{total_devices} started ({apk_type})", ip, "UPDATE")
                 
                 # Run installation with progress tracking
-                success = await optimized_perform_installation(ip, extract_dir)
+                success = await optimized_perform_installation(ip, apk_path, apk_type)
                 
                 if success:
                     log("Update successful", ip, "UPDATE")
@@ -5512,12 +5692,12 @@ def format_runtime(seconds):
     return f"{hours}h {minutes}m"
 
 # WebSocket Status Data Function
-async def get_status_data():
+async def get_status_data(apk_type: str = "google"):
     """Collects status data for WebSocket updates, similar to /api/status endpoint"""
     config = load_config()
     devices = []
     
-    versions = get_available_versions()
+    versions = get_available_versions(apk_type)
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
 
@@ -5583,7 +5763,8 @@ async def get_status_data():
         "pif_auto_update_enabled": config.get("pif_auto_update_enabled", True),
         "pogo_auto_update_enabled": config.get("pogo_auto_update_enabled", True),
         "update_in_progress": update_in_progress,
-        "update_progress": current_progress
+        "update_progress": current_progress,
+        "apk_type": apk_type
     }
 
 def is_logged_in(request: Request) -> bool:
@@ -5614,9 +5795,9 @@ def get_template_context(request: Request, **kwargs):
     context.update(kwargs)
     return context
 
-async def get_status_data_with_tailwind_classes():
+async def get_status_data_with_tailwind_classes(apk_type: str = "google"):
     """Enhanced version of get_status_data that adds Tailwind CSS-specific class information"""
-    data = await get_status_data()
+    data = await get_status_data(apk_type)
     
     for device in data["devices"]:
         device["adb_status_class"] = "text-green-500" if device["status"] else "text-red-500"
@@ -5833,12 +6014,16 @@ def logout_action(request: Request):
     return RedirectResponse(url="/login")
 
 @app.get("/status", response_class=HTMLResponse)
-async def status_page(request: Request):
+async def status_page(request: Request, apk_type: str = "google"):
     if redirect := require_login(request):
         return redirect
 
     config = load_config()
     devices = []
+
+    # Validate apk_type parameter
+    if apk_type not in ("google", "samsung"):
+        apk_type = "google"
 
     # Check if token is valid - get device_token (main field)
     token_valid = False
@@ -5853,8 +6038,8 @@ async def status_page(request: Request):
             log(f"Error validating token in status: {e}", None, "ERROR")
             token_valid = False
     
-    # Get PoGo version info for buttons
-    versions = get_available_versions()
+    # Get PoGo version info for buttons (filtered by apk_type)
+    versions = get_available_versions(apk_type)
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
     
@@ -5905,7 +6090,8 @@ async def status_page(request: Request):
         "token_valid": token_valid,
         "now": time.time(),
         "pogo_latest": pogo_latest,
-        "pogo_previous": pogo_previous
+        "pogo_previous": pogo_previous,
+        "apk_type": apk_type
     })
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -6281,19 +6467,24 @@ async def pif_device_update(request: Request, device_ip: str = Form(...), versio
         return RedirectResponse(url="/status?error=Module update failed", status_code=302)
 
 @app.post("/pogo/device-update", response_class=HTMLResponse)
-async def pogo_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...)):
+async def pogo_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...), apk_type: str = Form("google")):
     if redirect := require_login(request):
         return redirect
 
+    # Validate apk_type
+    if apk_type not in ("google", "samsung"):
+        apk_type = "google"
+
     device_id = format_device_id(device_ip)
-    versions = get_available_versions()
+    versions = get_available_versions(apk_type)
     target_version = None
     
     for version_type in ["latest", "previous"]:
         if version_type in versions and versions[version_type].get("version") == version:
             target_version = versions[version_type]
     
-    if not target_version:
+    if not target_version and apk_type == "google":
+        # For Google, try checking mirror
         try:
             response = httpx.get(
                 f"{POGO_MIRROR_URL}/index.json",
@@ -6307,24 +6498,30 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
                             "version": version,
                             "filename": f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm",
                             "url": f"{POGO_MIRROR_URL}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm",
-                            "arch": DEFAULT_ARCH
+                            "arch": DEFAULT_ARCH,
+                            "apk_type": "google"
                         }
                         break
         except Exception as e:
             log(f"Error checking all versions: {str(e)}", None, "ERROR")
-            return RedirectResponse(url="/status?error=Failed to check version", status_code=302)
     
     if not target_version:
         # Fallback: check for locally uploaded APK
-        local_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm"
-        local_path = APK_DIR / local_filename
+        if apk_type == "samsung":
+            local_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apk"
+            local_path = S_APK_DIR / local_filename
+        else:
+            local_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm"
+            local_path = APK_DIR / local_filename
+            
         if local_path.exists():
             target_version = {
                 "version": version,
                 "filename": local_filename,
-                "arch": DEFAULT_ARCH
+                "arch": DEFAULT_ARCH,
+                "apk_type": apk_type
             }
-            log(f"Using locally uploaded APK for version {version}", None, "UPDATE")
+            log(f"Using locally uploaded {apk_type.upper()} APK for version {version}", None, "UPDATE")
 
     if not target_version:
         return RedirectResponse(url="/status?error=Version not found", status_code=302)
@@ -6336,18 +6533,31 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
 
         # Mark device and broadcast immediately so UI shows spinner
         mark_device_in_update(device_ip, "pogo")
-        status_data = await get_status_data()
+        status_data = await get_status_data(apk_type)
         await ws_manager.broadcast(status_data)
 
-        apk_file = APK_DIR / target_version["filename"]
-        if not apk_file.exists():
-            apk_file = download_apk(target_version)
+        if apk_type == "samsung":
+            # Samsung: direct .apk installation (no extraction needed)
+            apk_file = S_APK_DIR / target_version["filename"]
+            if not apk_file.exists():
+                # Try to download if URL available
+                if "url" in target_version and target_version["url"]:
+                    apk_file = download_apk(target_version)
+                else:
+                    return RedirectResponse(url=f"/status?error=Samsung APK file not found locally for version {version}", status_code=302)
+            
+            success = await optimized_perform_installation(device_ip, apk_file, "samsung")
+        else:
+            # Google: extract .apkm and install
+            apk_file = APK_DIR / target_version["filename"]
+            if not apk_file.exists():
+                apk_file = download_apk(target_version)
 
-        specific_extract_dir = EXTRACT_DIR / target_version["version"]
-        specific_extract_dir.mkdir(parents=True, exist_ok=True)
-        unzip_apk(apk_file, specific_extract_dir)
+            specific_extract_dir = EXTRACT_DIR / target_version["version"]
+            specific_extract_dir.mkdir(parents=True, exist_ok=True)
+            unzip_apk(apk_file, specific_extract_dir)
 
-        success = await optimized_perform_installation(device_ip, specific_extract_dir)
+            success = await optimized_perform_installation(device_ip, specific_extract_dir, "google")
 
         if success:
             return RedirectResponse(url="/status?success=Pokemon GO updated successfully", status_code=302)
@@ -6361,26 +6571,45 @@ async def pogo_device_update(request: Request, device_ip: str = Form(...), versi
         current_progress = 0
 
 @app.post("/pogo/update", response_class=HTMLResponse)
-async def pogo_update(request: Request):
+async def pogo_update(request: Request, apk_type: str = Form("google")):
     if redirect := require_login(request):
         return redirect
+    
+    # Validate apk_type
+    if apk_type not in ("google", "samsung"):
+        apk_type = "google"
     
     config = load_config()
     device_ips = [dev["ip"] for dev in config.get("devices", [])]
     
-    versions = get_available_versions()
-    if not versions:
-        return RedirectResponse(url="/status?error=No versions found", status_code=302)
+    versions = get_available_versions(apk_type)
+    if not versions or not versions.get("latest"):
+        return RedirectResponse(url=f"/status?error=No {apk_type} versions found", status_code=302)
     
     entry = versions["latest"]
-    apk_file = APK_DIR / entry["filename"]
-    if not apk_file.exists():
-        apk_file = download_apk(entry)
     
-    version_extract_dir = EXTRACT_DIR / entry["version"]
-    unzip_apk(apk_file, version_extract_dir)
-    
-    await perform_installations(device_ips, version_extract_dir)
+    if apk_type == "samsung":
+        # Samsung: direct .apk installation
+        apk_file = S_APK_DIR / entry["filename"]
+        if not apk_file.exists():
+            if "url" in entry and entry["url"]:
+                apk_file = download_apk(entry)
+            else:
+                return RedirectResponse(url=f"/status?error=Samsung APK not found locally for version {entry['version']}", status_code=302)
+        
+        # Install directly without extraction
+        for device_ip in device_ips:
+            await optimized_perform_installation(device_ip, apk_file, "samsung")
+    else:
+        # Google: extract .apkm and install
+        apk_file = APK_DIR / entry["filename"]
+        if not apk_file.exists():
+            apk_file = download_apk(entry)
+        
+        version_extract_dir = EXTRACT_DIR / entry["version"]
+        unzip_apk(apk_file, version_extract_dir)
+        
+        await perform_installations(device_ips, version_extract_dir, "google")
     
     return RedirectResponse(url="/status", status_code=302)
 
@@ -6388,59 +6617,89 @@ MAX_APK_UPLOAD_SIZE = 300 * 1024 * 1024  # 300 MB
 
 @app.post("/pogo/upload-apk")
 async def upload_pogo_apk(request: Request, file: UploadFile = File(...)):
-    """Upload a .apkm file manually as fallback when mirror is unavailable"""
+    """Upload a .apkm (Google) or .apk (Samsung) file manually as fallback"""
     if redirect := require_login(request):
         return redirect
 
-    if not file.filename or not file.filename.lower().endswith('.apkm'):
-        return JSONResponse(status_code=400, content={"success": False, "error": "Only .apkm files are accepted"})
+    if not file.filename:
+        return JSONResponse(status_code=400, content={"success": False, "error": "No file provided"})
+    
+    filename_lower = file.filename.lower()
+    is_apkm = filename_lower.endswith('.apkm')
+    is_apk = filename_lower.endswith('.apk')
+    
+    if not (is_apkm or is_apk):
+        return JSONResponse(status_code=400, content={"success": False, "error": "Only .apkm (Google) or .apk (Samsung) files are accepted"})
 
     try:
         content = await file.read()
         if len(content) > MAX_APK_UPLOAD_SIZE:
             return JSONResponse(status_code=400, content={"success": False, "error": f"File too large. Maximum size is {MAX_APK_UPLOAD_SIZE // (1024*1024)}MB"})
         if len(content) < 1024:
-            return JSONResponse(status_code=400, content={"success": False, "error": "File is too small to be a valid .apkm"})
+            return JSONResponse(status_code=400, content={"success": False, "error": "File is too small to be a valid APK"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": f"Failed to read uploaded file: {str(e)}"})
 
-    APK_DIR.mkdir(parents=True, exist_ok=True)
-    temp_path = APK_DIR / f"_upload_temp_{uuid4().hex}.apkm"
+    # Determine target directory and type
+    if is_apkm:
+        target_dir = APK_DIR
+        apk_type = "google"
+        type_label = "G"
+        ext = "apkm"
+    else:
+        target_dir = S_APK_DIR
+        apk_type = "samsung"
+        type_label = "S"
+        ext = "apk"
+    
+    target_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = target_dir / f"_upload_temp_{uuid4().hex}.{ext}"
 
     try:
         with open(temp_path, "wb") as f:
             f.write(content)
 
-        try:
-            with zipfile.ZipFile(temp_path, 'r') as zf:
-                apk_files = [f for f in zf.namelist() if f.endswith('.apk')]
-                if not apk_files:
-                    return JSONResponse(status_code=400, content={"success": False, "error": "Invalid .apkm file: no .apk files found inside the archive"})
-        except zipfile.BadZipFile:
-            return JSONResponse(status_code=400, content={"success": False, "error": "Invalid file: not a valid ZIP/APKM archive"})
+        # Validate based on file type
+        if is_apkm:
+            try:
+                with zipfile.ZipFile(temp_path, 'r') as zf:
+                    apk_files = [f for f in zf.namelist() if f.endswith('.apk')]
+                    if not apk_files:
+                        return JSONResponse(status_code=400, content={"success": False, "error": "Invalid .apkm file: no .apk files found inside the archive"})
+            except zipfile.BadZipFile:
+                return JSONResponse(status_code=400, content={"success": False, "error": "Invalid file: not a valid ZIP/APKM archive"})
+            
+            try:
+                version = extract_pogo_version_from_apkm(temp_path)
+                log(f"Extracted version {version} from uploaded APKM", None, "UPDATE")
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"success": False, "error": f"Could not extract version from APKM: {str(e)}"})
+        else:
+            # For Samsung APK, try to extract version from filename or use generic pattern
+            version_match = re.search(r'(\d+\.\d+\.\d+)', file.filename)
+            if version_match:
+                version = version_match.group(1)
+            else:
+                return JSONResponse(status_code=400, content={"success": False, "error": "Could not extract version from APK filename. Format should be: com.nianticlabs.pokemongo_<arch>_<version>.apk"})
 
-        try:
-            version = extract_pogo_version_from_apkm(temp_path)
-            log(f"Extracted version {version} from uploaded APKM", None, "UPDATE")
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"success": False, "error": f"Could not extract version from APKM: {str(e)}"})
-
-        target_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.apkm"
-        target_path = APK_DIR / target_filename
+        target_filename = f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{version}.{ext}"
+        target_path = target_dir / target_filename
 
         if target_path.exists():
             temp_path.unlink(missing_ok=True)
-            return JSONResponse(content={"success": True, "version": version, "message": f"Version {version} is already available", "already_exists": True})
+            return JSONResponse(content={"success": True, "version": version, "apk_type": apk_type, "message": f"Version {version} ({type_label}) is already available", "already_exists": True})
 
         shutil.move(str(temp_path), str(target_path))
-        log(f"Saved uploaded APKM as {target_filename}", None, "UPDATE")
+        log(f"Saved uploaded {type_label} APK as {target_filename}", None, "UPDATE")
 
-        extract_dir = EXTRACT_DIR / version
-        try:
-            unzip_apk(target_path, extract_dir)
-            log(f"Extracted uploaded APKM to {extract_dir}", None, "UPDATE")
-        except Exception as e:
-            log(f"Warning: Failed to pre-extract uploaded APKM: {e}", None, "WARNING")
+        # Only extract for Google/APKM files
+        if is_apkm:
+            extract_dir = EXTRACT_DIR / version
+            try:
+                unzip_apk(target_path, extract_dir)
+                log(f"Extracted uploaded APKM to {extract_dir}", None, "UPDATE")
+            except Exception as e:
+                log(f"Warning: Failed to pre-extract uploaded APKM: {e}", None, "WARNING")
 
         get_available_versions.cache_clear()
 
@@ -6450,7 +6709,7 @@ async def upload_pogo_apk(request: Request, file: UploadFile = File(...)):
         except Exception:
             pass
 
-        return JSONResponse(content={"success": True, "version": version, "filename": target_filename, "message": f"Version {version} uploaded and ready for installation"})
+        return JSONResponse(content={"success": True, "version": version, "apk_type": apk_type, "filename": target_filename, "message": f"Version {version} ({type_label}) uploaded and ready for installation"})
 
     except Exception as e:
         log(f"APK upload error: {str(e)}", None, "ERROR")
@@ -6460,20 +6719,44 @@ async def upload_pogo_apk(request: Request, file: UploadFile = File(...)):
             temp_path.unlink(missing_ok=True)
 
 @app.get("/api/pogo-local-versions")
-async def get_local_pogo_versions(request: Request):
-    """Returns list of locally available PoGO APK versions"""
+async def get_local_pogo_versions(request: Request, apk_type: str = "all"):
+    """Returns list of locally available PoGO APK versions (Google APKM or Samsung APK)"""
     if redirect := require_login(request):
         return redirect
 
-    APK_DIR.mkdir(parents=True, exist_ok=True)
     versions = []
 
-    for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-        match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-        if match:
-            version = match.group(1)
-            size_mb = round(apkm_file.stat().st_size / (1024 * 1024), 1)
-            versions.append({"version": version, "filename": apkm_file.name, "size_mb": size_mb})
+    # Get Google/APKM versions
+    if apk_type in ("all", "google"):
+        APK_DIR.mkdir(parents=True, exist_ok=True)
+        for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+            if match:
+                version = match.group(1)
+                size_mb = round(apkm_file.stat().st_size / (1024 * 1024), 1)
+                versions.append({
+                    "version": version,
+                    "filename": apkm_file.name,
+                    "size_mb": size_mb,
+                    "apk_type": "google",
+                    "type_label": "G"
+                })
+
+    # Get Samsung/APK versions
+    if apk_type in ("all", "samsung"):
+        S_APK_DIR.mkdir(parents=True, exist_ok=True)
+        for apk_file in S_APK_DIR.glob("com.nianticlabs.pokemongo_*.apk"):
+            match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apk', apk_file.name)
+            if match:
+                version = match.group(1)
+                size_mb = round(apk_file.stat().st_size / (1024 * 1024), 1)
+                versions.append({
+                    "version": version,
+                    "filename": apk_file.name,
+                    "size_mb": size_mb,
+                    "apk_type": "samsung",
+                    "type_label": "S"
+                })
 
     versions.sort(key=lambda x: [int(n) for n in x["version"].split(".")], reverse=True)
     return JSONResponse(content={"versions": versions})
@@ -6730,9 +7013,13 @@ def get_update_status():
     }
 
 @app.get("/api/status")
-async def api_status(request: Request):
+async def api_status(request: Request, apk_type: str = "google"):
     if not is_logged_in(request):
         return {"error": "Not authenticated"}
+    
+    # Validate apk_type parameter
+    if apk_type not in ("google", "samsung"):
+        apk_type = "google"
     
     status_data = await get_status_data_with_tailwind_classes()
     return status_data
