@@ -36,15 +36,11 @@
                     <option value="google">Google (G) - .apkm</option>
                     <option value="samsung">Samsung (S) - .apk</option>
                 </select>
-                <div class="pointer-events-none absolute inset-y-0 right-8 flex items-center px-2 text-gray-400">
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                     </svg>
                 </div>
-                <!-- Type Badge with Version -->
-                <span class="px-2 py-1 rounded text-xs font-bold whitespace-nowrap"
-                    :class="apkType === 'google' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'"
-                    x-text="(apkType === 'google' ? 'G' : 'S') + ' ' + pogoLatest"></span>
             </div>
 
             <button type="button" @click="pogoUpdateAll()"
