@@ -352,8 +352,41 @@
                     </div>
                 </div>
 
-                <!-- Discord Bot Settings -->
-                <div class="pt-2">
+            </form>
+        </div>
+    </div>
+
+    <!-- Discord Notifications -->
+    <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6" x-data="{ showDiscordAdvanced: false }">
+        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between">
+            <h2 class="text-xl font-medium text-white">Discord Notifications</h2>
+            <button type="button" @click="showDiscordAdvanced = !showDiscordAdvanced"
+                class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                <span x-text="showDiscordAdvanced ? 'Hide Advanced' : 'Advanced Settings'"></span>
+                <svg class="h-4 w-4" :class="{ 'rotate-180': showDiscordAdvanced }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+        </div>
+        <div class="p-6 space-y-4">
+            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
+                <!-- Discord Webhook - Always Visible -->
+                <div>
+                    <label for="discord_webhook_url" class="block text-sm font-medium text-gray-300 mb-1">
+                        Discord Webhook URL
+                    </label>
+                    <input type="text" id="discord_webhook_url" name="discord_webhook_url"
+                        class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                        value="{{ config.discord_webhook_url }}"
+                        placeholder="https://discord.com/api/webhooks/...">
+                    <p class="mt-1 text-sm text-gray-400">
+                        Receive notifications for device offline, updates, etc.
+                        <a href="https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks" target="_blank" class="text-blue-400 hover:underline">How to create webhook</a>
+                    </p>
+                </div>
+
+                <!-- Advanced: Discord Bot Settings -->
+                <div x-show="showDiscordAdvanced" x-transition class="pt-4 border-t border-gray-700 space-y-4">
                     <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6">
                         <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between flex-wrap gap-3">
                             <h2 class="text-xl font-medium text-white">Discord Bot</h2>
@@ -432,9 +465,9 @@
                                 <p class="mt-1 text-sm text-gray-400">The bot posts status notifications here (device offline, updates, …). Can be the same as the command channel. Leave empty to disable notifications.</p>
                             </div>
                             <div class="bg-gray-800 rounded-md p-3 text-sm text-gray-400">
-                                <p class="font-medium text-gray-300 mb-1">Features:</p>
+                                <p class="font-medium text-gray-300 mb-1">Bot Features (optional):</p>
                                 <ul class="list-disc list-inside space-y-1">
-                                    <li><strong class="text-gray-300">Live Status Embed</strong> – Auto-updating device dashboard in the notification channel</li>
+                                    <li><strong class="text-gray-300">Live Status Embed</strong> – Real-time device dashboard</li>
                                     <li><code class="text-blue-300">/update_pogo</code> – Update PoGo on all devices</li>
                                     <li><code class="text-blue-300">/restart</code> – Restart PoGo/MITM on all devices</li>
                                 </ul>
@@ -443,10 +476,26 @@
                     </div>
                 </div>
 
-                <div>
+                <div class="flex items-center gap-3 pt-2">
                     <button type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
-                        Settings</button>
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        Save Settings
+                    </button>
+                    <span x-show="discordStatus !== null && showDiscordAdvanced" class="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1"
+                        :class="{
+                            'bg-green-900/50 text-green-400': discordStatus === 'online',
+                            'bg-yellow-900/50 text-yellow-400': discordStatus === 'connecting',
+                            'bg-red-900/50 text-red-400': discordStatus === 'offline' || discordStatus === 'not_installed',
+                            'bg-gray-700 text-gray-400': discordStatus === 'no_token'
+                        }">
+                        <span x-text="{
+                            online: '🟢 Online',
+                            connecting: '🟡 Connecting...',
+                            offline: '🔴 Offline',
+                            no_token: '⚪ No Token',
+                            not_installed: '❌ discord.py missing'
+                        }[discordStatus] || discordStatus"></span>
+                    </span>
                 </div>
             </form>
         </div>

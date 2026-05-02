@@ -757,12 +757,45 @@ def ttl_cache(ttl: int):
         return wrapper
     return decorator
 
-# Discord Notification Function (via Bot)
+# Discord Webhook Notification Function
+async def send_discord_webhook(message: str, title: str = None, color: int = 0x5865F2):
+    """Sends a notification via Discord webhook URL."""
+    cfg = load_config()
+    webhook_url = cfg.get("discord_webhook_url", "").strip()
+    if not webhook_url:
+        return False
+    try:
+        embed = {
+            "title": title or "Rotomina Notification",
+            "description": message,
+            "color": color,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "footer": {"text": "Rotomina"}
+        }
+        payload = {"embeds": [embed]}
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        if response.status_code in (200, 204):
+            log(f"Discord webhook sent: {message}", None, "API")
+            return True
+        else:
+            log(f"Discord webhook error: HTTP {response.status_code}", None, "ERROR")
+            return False
+    except Exception as e:
+        log(f"Discord webhook error: {e}", None, "ERROR")
+        return False
+
+
+# Discord Notification Function (via Bot or Webhook)
 async def send_discord_notification(message: str, title: str = None, color: int = 0x5865F2):
-    """Sends a notification via the Discord bot to the configured notify channel."""
+    """Sends a notification via Discord webhook (if configured) or bot."""
+    cfg = load_config()
+    # Try webhook first if configured
+    webhook_url = cfg.get("discord_webhook_url", "").strip()
+    if webhook_url:
+        return await send_discord_webhook(message, title, color)
+    # Fallback to bot if available
     if not DISCORD_BOT_AVAILABLE or _discord_bot_client is None:
         return False
-    cfg = load_config()
     channel_id = cfg.get("discord_bot_notify_channel_id", "").strip()
     if not channel_id:
         return False
@@ -1017,22 +1050,27 @@ async def update_discord_status_embed():
 async def notify_device_offline(device_name: str, ip: str):
     add_discord_event(f"{device_name} went offline")
     await update_discord_status_embed()
+    await send_discord_webhook(f"Device {device_name} ({ip}) went offline", "Device Offline", 0xE74C3C)
 
 async def notify_device_online(device_name: str, ip: str):
     add_discord_event(f"{device_name} is back online")
     await update_discord_status_embed()
+    await send_discord_webhook(f"Device {device_name} ({ip}) is back online", "Device Online", 0x2ECC71)
 
 async def notify_memory_restart(device_name: str, ip: str, memory: int, threshold: int):
     add_discord_event(f"{device_name} restarted — low memory")
     await update_discord_status_embed()
+    await send_discord_webhook(f"Device {device_name} restarted due to low memory ({memory}MB < {threshold}MB)", "Memory Restart", 0xE67E22)
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     add_discord_event(f"{update_type} {version} installed on {device_name}")
     await update_discord_status_embed()
+    await send_discord_webhook(f"{update_type} {version} installed on {device_name}", "Update Installed", 0x2ECC71)
 
 async def notify_update_downloaded(update_type: str, version: str):
     add_discord_event(f"{update_type} {version} downloaded")
     await update_discord_status_embed()
+    await send_discord_webhook(f"{update_type} {version} downloaded and ready for installation", "Update Downloaded", 0x3498DB)
 
 
 # Token Validation Functions
@@ -1135,6 +1173,7 @@ async def notify_invalid_token(device_name: str, device_ip: str, error_message: 
     """Sends Discord notification when device token is invalid"""
     add_discord_event(f"Token invalid for {device_name}")
     await update_discord_status_embed()
+    await send_discord_webhook(f"Invalid token for {device_name} ({device_ip}): {error_message}", "Invalid Token", 0xE74C3C)
 
 # Device update tracking functions
 def mark_device_in_update(device_id: str, update_type: str) -> None:
@@ -6126,6 +6165,7 @@ def settings_save(
     rotomApiUrl: str = Form(""),
     rotomApiUser: str = Form(""),
     rotomApiPass: str = Form(""),
+    discord_webhook_url: str = Form(""),
     discord_bot_token: str = Form(""),
     discord_bot_channel_id: str = Form(""),
     discord_bot_role_id: str = Form(""),
@@ -6139,6 +6179,7 @@ def settings_save(
         "rotomApiUrl": rotomApiUrl,
         "rotomApiUser": rotomApiUser,
         "rotomApiPass": rotomApiPass,
+        "discord_webhook_url": discord_webhook_url,
         "discord_bot_token": discord_bot_token,
         "discord_bot_channel_id": discord_bot_channel_id,
         "discord_bot_role_id": discord_bot_role_id,
