@@ -55,3 +55,4 @@ Thumbs.db
 /config.json.bak
 /data/adb/adbkey.pub
 /node_modules/
+/data/mapworld_last_etag

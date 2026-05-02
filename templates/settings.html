@@ -129,6 +129,14 @@
                                 <span x-show="pending"
                                     class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
                             </button>
+                            <button type="button" @click="openRotomConfig('{{ device.ip }}')"
+                                class="ml-2 p-1.5 bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-400 border border-gray-600 hover:border-blue-600 rounded-md"
+                                title="Edit Rotom Config">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                            </button>
                             <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
                                 class="ml-2 p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
                                 title="Remove device">
@@ -229,7 +237,15 @@
                                 </div>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                <div class="flex justify-end space-x-2 items-center">
+                                <div class="flex justify-end space-x-3 items-center">
+                                    <button type="button" @click="openRotomConfig('{{ device.ip }}')"
+                                        class="p-1.5 text-gray-400 hover:text-blue-400 hover:bg-blue-900/30 rounded-md border border-transparent hover:border-blue-700 transition-colors"
+                                        title="Edit Rotom Config">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        </svg>
+                                    </button>
                                     <div class="flex items-center">
                                         <input type="checkbox" form="removeForm" name="devices" value="{{ device.ip }}"
                                             class="w-4 h-4 text-blue-600 rounded border-gray-700 bg-gray-700 focus:ring-blue-500">
@@ -288,6 +304,7 @@
                     </div>
                     <p class="mt-2 text-sm text-gray-400">This token will be synchronized to all devices before starting
                         MapWorld. The token is used for Discord authentication and must be the same across all devices.
+                        Get your token from <a href="https://protomines.ddns.net/" target="_blank" class="text-blue-400 hover:underline">protomines.ddns.net</a>.
                     </p>
                 </div>
                 <div>
@@ -310,7 +327,7 @@
             <h2 class="text-xl font-medium text-white">API Settings</h2>
         </div>
         <div class="p-6">
-            <form action="/settings/save" method="post" class="space-y-4">
+            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label for="rotomApiUrl" class="block text-sm font-medium text-gray-300 mb-1">Rotom API
@@ -335,31 +352,150 @@
                     </div>
                 </div>
 
-                <!-- Discord Settings -->
-                <div class="pt-5">
+            </form>
+        </div>
+    </div>
+
+    <!-- Discord Notifications -->
+    <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6" x-data="{ showDiscordAdvanced: false }">
+        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between">
+            <h2 class="text-xl font-medium text-white">Discord Notifications</h2>
+            <button type="button" @click="showDiscordAdvanced = !showDiscordAdvanced"
+                class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                <span x-text="showDiscordAdvanced ? 'Hide Advanced' : 'Advanced Settings'"></span>
+                <svg class="h-4 w-4" :class="{ 'rotate-180': showDiscordAdvanced }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+        </div>
+        <div class="p-6 space-y-4">
+            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
+                <!-- Discord Webhook - Always Visible -->
+                <div>
+                    <label for="discord_webhook_url" class="block text-sm font-medium text-gray-300 mb-1">
+                        Discord Webhook URL
+                    </label>
+                    <input type="text" id="discord_webhook_url" name="discord_webhook_url"
+                        class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                        value="{{ config.discord_webhook_url }}"
+                        placeholder="https://discord.com/api/webhooks/...">
+                    <p class="mt-1 text-sm text-gray-400">
+                        Receive notifications for device offline, updates, etc.
+                        <a href="https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks" target="_blank" class="text-blue-400 hover:underline">How to create webhook</a>
+                    </p>
+                </div>
+
+                <!-- Advanced: Discord Bot Settings -->
+                <div x-show="showDiscordAdvanced" x-transition class="pt-4 border-t border-gray-700 space-y-4">
                     <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6">
-                        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
-                            <h2 class="text-xl font-medium text-white">Discord Webhook Settings</h2>
+                        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700 flex items-center justify-between flex-wrap gap-3">
+                            <h2 class="text-xl font-medium text-white">Discord Bot</h2>
+                            <div class="flex items-center gap-3">
+                                <span x-show="discordStatus !== null" class="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1"
+                                    :class="{
+                                        'bg-green-900/50 text-green-400': discordStatus === 'online',
+                                        'bg-yellow-900/50 text-yellow-400': discordStatus === 'connecting',
+                                        'bg-red-900/50 text-red-400': discordStatus === 'offline' || discordStatus === 'not_installed',
+                                        'bg-gray-700 text-gray-400': discordStatus === 'no_token'
+                                    }">
+                                    <span x-text="{
+                                        online: '🟢 Online',
+                                        connecting: '🟡 Connecting...',
+                                        offline: '🔴 Offline',
+                                        no_token: '⚪ No Token',
+                                        not_installed: '❌ discord.py missing'
+                                    }[discordStatus] || discordStatus"></span>
+                                    <span x-show="discordStatus === 'online' && discordBotUsername" x-text="'(' + discordBotUsername + ')'" class="text-green-500"></span>
+                                </span>
+                                <button type="button" @click="restartDiscordBot()"
+                                    :disabled="discordRestarting || discordStatus === 'no_token' || discordStatus === 'not_installed'"
+                                    class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded-md text-xs font-medium flex items-center gap-1">
+                                    <svg class="h-3.5 w-3.5" :class="{'animate-spin': discordRestarting}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                    <span x-text="discordRestarting ? 'Restarting...' : 'Restart bot'"></span>
+                                </button>
+                            </div>
                         </div>
-                        <div class="p-6">
+                        <div class="p-6 space-y-4">
                             <div>
-                                <label for="discord_webhook_url"
-                                    class="block text-sm font-medium text-gray-300 mb-1">Discord Webhook URL</label>
-                                <input type="text" id="discord_webhook_url" name="discord_webhook_url"
+                                <label for="discord_bot_token"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Bot Token</label>
+                                <input type="password" id="discord_bot_token" name="discord_bot_token"
                                     class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                                    value="{{ config.discord_webhook_url }}"
-                                    placeholder="https://discord.com/api/webhooks/...">
-                                <p class="mt-2 text-sm text-gray-400">Enter the Discord webhook URL to receive status
-                                    notifications. Leave empty to disable notifications.</p>
+                                    value="{{ config.discord_bot_token }}"
+                                    placeholder="Bot token from the Discord Developer Portal">
+                                <p class="mt-1 text-sm text-gray-400">Bot token from the <a href="https://discord.com/developers/applications" target="_blank" class="text-blue-400 hover:underline">Discord Developer Portal</a>. Leave empty to disable the bot.</p>
+                                <div x-show="discordStatus === 'not_installed'" class="mt-2 bg-red-900/20 border border-red-700/50 rounded-md p-3 text-sm text-red-400 space-y-2">
+                                    <p>⚠️ discord.py could not be imported.</p>
+                                    <p x-show="discordImportError" class="text-xs text-gray-500">Error: <span x-text="discordImportError"></span></p>
+                                    <div x-show="discordPythonPath">
+                                        <p class="text-xs text-gray-400">Rotomina uses: <code class="bg-gray-900 px-1 rounded" x-text="discordPythonPath"></code></p>
+                                        <p class="text-xs text-gray-400 mt-1">Install discord.py for this interpreter:</p>
+                                        <code class="block bg-gray-900 px-2 py-1 rounded text-xs text-blue-300 select-all mt-1" x-text="discordPythonPath + ' -m pip install &quot;discord.py>=2.3.0&quot;'"></code>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">Restart rotomina after installing.</p>
+                                </div>
+                            </div>
+                            <div>
+                                <label for="discord_bot_channel_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Allowed Command Channel (ID)</label>
+                                <input type="text" id="discord_bot_channel_id" name="discord_bot_channel_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_channel_id }}"
+                                    placeholder="e.g. 1234567890123456789">
+                                <p class="mt-1 text-sm text-gray-400">Commands are only accepted in this channel. Leave empty to allow any channel.</p>
+                            </div>
+                            <div>
+                                <label for="discord_bot_role_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Allowed Role (ID)</label>
+                                <input type="text" id="discord_bot_role_id" name="discord_bot_role_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_role_id }}"
+                                    placeholder="e.g. 9876543210987654321">
+                                <p class="mt-1 text-sm text-gray-400">Only users with this role can execute commands. Leave empty to allow all users.</p>
+                            </div>
+                            <div>
+                                <label for="discord_bot_notify_channel_id"
+                                    class="block text-sm font-medium text-gray-300 mb-1">Notification Channel (ID)</label>
+                                <input type="text" id="discord_bot_notify_channel_id" name="discord_bot_notify_channel_id"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                    value="{{ config.discord_bot_notify_channel_id }}"
+                                    placeholder="e.g. 1234567890123456789">
+                                <p class="mt-1 text-sm text-gray-400">The bot posts status notifications here (device offline, updates, …). Can be the same as the command channel. Leave empty to disable notifications.</p>
+                            </div>
+                            <div class="bg-gray-800 rounded-md p-3 text-sm text-gray-400">
+                                <p class="font-medium text-gray-300 mb-1">Bot Features (optional):</p>
+                                <ul class="list-disc list-inside space-y-1">
+                                    <li><strong class="text-gray-300">Live Status Embed</strong> – Real-time device dashboard</li>
+                                    <li><code class="text-blue-300">/update_pogo</code> – Update PoGo on all devices</li>
+                                    <li><code class="text-blue-300">/restart</code> – Restart PoGo/MITM on all devices</li>
+                                </ul>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div>
+                <div class="flex items-center gap-3 pt-2">
                     <button type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
-                        Settings</button>
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        Save Settings
+                    </button>
+                    <span x-show="discordStatus !== null && showDiscordAdvanced" class="px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1"
+                        :class="{
+                            'bg-green-900/50 text-green-400': discordStatus === 'online',
+                            'bg-yellow-900/50 text-yellow-400': discordStatus === 'connecting',
+                            'bg-red-900/50 text-red-400': discordStatus === 'offline' || discordStatus === 'not_installed',
+                            'bg-gray-700 text-gray-400': discordStatus === 'no_token'
+                        }">
+                        <span x-text="{
+                            online: '🟢 Online',
+                            connecting: '🟡 Connecting...',
+                            offline: '🔴 Offline',
+                            no_token: '⚪ No Token',
+                            not_installed: '❌ discord.py missing'
+                        }[discordStatus] || discordStatus"></span>
+                    </span>
                 </div>
             </form>
         </div>
@@ -395,6 +531,67 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 Module Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- Module Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">Module Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure which GitHub repositories to fetch module updates from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pif_module_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-module-source" method="post" class="inline">
+                                        <input type="hidden" name="repo" value="{{ source.repo }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">{{ source.repo }}</div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-module-source" method="post" class="inline">
+                                    <input type="hidden" name="repo" value="{{ source.repo }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New Source Form -->
+                        <form action="/settings/add-module-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., My Custom Fork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., username/PlayIntegrityFork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 
@@ -421,7 +618,217 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 PoGO Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- PoGO Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">PoGO Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure where to fetch Pokémon GO APKs from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pogo_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-pogo-source" method="post" class="inline">
+                                        <input type="hidden" name="source_name" value="{{ source.name }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">
+                                            {% if source.type == 'github' %}
+                                            {{ source.repo }} (GitHub)
+                                            {% elif source.type == 'mirror' %}
+                                            {{ source.url }} (Mirror)
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-pogo-source" method="post" class="inline">
+                                    <input type="hidden" name="source_name" value="{{ source.name }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New PoGO Source Form -->
+                        <form action="/settings/add-pogo-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., Helium Project" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Type</label>
+                                    <select name="source_type" id="pogoSourceType" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                                        onchange="togglePogoSourceFields()">
+                                        <option value="">Select type...</option>
+                                        <option value="mirror">Mirror (index.json)</option>
+                                        <option value="github">GitHub Releases</option>
+                                    </select>
+                                </div>
+                                <div id="mirrorUrlField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">Mirror URL</label>
+                                    <input type="url" name="source_url" placeholder="https://mirror.example.com"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div id="githubRepoField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., The-Helium-Project/pogo-releases"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
+
+                        <script>
+                        function togglePogoSourceFields() {
+                            const type = document.getElementById('pogoSourceType').value;
+                            document.getElementById('mirrorUrlField').style.display = type === 'mirror' ? 'block' : 'none';
+                            document.getElementById('githubRepoField').style.display = type === 'github' ? 'block' : 'none';
+                        }
+                        </script>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual APK Upload -->
+    <div class="bg-dark-800 shadow-lg rounded-lg overflow-hidden mb-6" x-data="apkUpload()">
+        <div class="px-6 py-4 bg-gray-800/50 border-b border-gray-700">
+            <h2 class="text-xl font-medium text-white">Manual PoGO APK Upload</h2>
+        </div>
+        <div class="p-6">
+            <p class="text-sm text-gray-400 mb-4">
+                Upload a .apkm (Google) or .apk (Samsung) file manually when a version is not available on the mirror.
+                The uploaded APK will be available for installation on all devices.
+            </p>
+
+            <!-- APK Type Selector -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-300 mb-2">APK Type</label>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="google" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Google (G) - .apkm</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="samsung" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Samsung (S) - .apk</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- File input -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-300 mb-2" x-text="apkType === 'google' ? 'Select .apkm file (Google)' : 'Select .apk file (Samsung)'"></label>
+                <label class="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
+                    :class="{ 'border-blue-500 bg-blue-900/20': selectedFile }">
+                    <input type="file" :accept="apkType === 'google' ? '.apkm' : '.apk'" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
+                    <div class="text-center">
+                        <svg class="mx-auto h-8 w-8 text-gray-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : (apkType === 'google' ? 'Click to select .apkm file' : 'Click to select .apk file')"></span>
+                    </div>
+                </label>
+            </div>
+
+            <!-- Upload button -->
+            <button type="button" @click="uploadApk()"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="!selectedFile || uploading">
+                <template x-if="!uploading">
+                    <span class="flex items-center">
+                        <svg class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Upload APK
+                    </span>
+                </template>
+                <template x-if="uploading">
+                    <span class="flex items-center">
+                        <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Uploading...
+                    </span>
+                </template>
+            </button>
+
+            <!-- Progress bar -->
+            <div x-show="uploading" class="mt-4">
+                <div class="flex justify-between text-sm text-gray-400 mb-1">
+                    <span>Upload progress</span>
+                    <span x-text="uploadProgress + '%'"></span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2.5">
+                    <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                        :style="'width: ' + uploadProgress + '%'"></div>
+                </div>
+            </div>
+
+            <!-- Success message -->
+            <div x-show="uploadSuccess" class="mt-4 bg-green-900/30 border border-green-700 text-green-400 px-4 py-3 rounded">
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span x-text="uploadMessage"></span>
+                </div>
+            </div>
+
+            <!-- Error message -->
+            <div x-show="uploadError" class="mt-4 bg-red-900/30 border border-red-700 text-red-400 px-4 py-3 rounded">
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span x-text="uploadError"></span>
+                </div>
+            </div>
+
+            <!-- Locally available versions -->
+            <div class="mt-6 border-t border-gray-700 pt-4">
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions (All Types)</h4>
+                <div x-show="localVersions.length === 0" class="text-sm text-gray-500">No locally stored APK versions found.</div>
+                <div x-show="localVersions.length > 0" class="space-y-1">
+                    <template x-for="v in localVersions" :key="v.version + '-' + (v.apk_type || 'google')">
+                        <div class="flex items-center justify-between text-sm bg-gray-800/40 border border-gray-700 rounded px-3 py-2">
+                            <span class="text-gray-300 flex items-center gap-2">
+                                <span x-text="v.version"></span>
+                                <span class="text-xs px-1.5 py-0.5 rounded" :class="v.type_label === 'S' ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'" x-text="v.type_label || 'G'"></span>
+                            </span>
+                            <span class="text-gray-500 text-xs" x-text="v.size_mb + ' MB'"></span>
+                        </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -443,6 +850,205 @@
             </button>
             <div x-show="cacheStatus" x-text="cacheStatus"
                 class="mt-3 text-sm bg-green-900/30 border border-green-700 text-green-400 px-4 py-2 rounded"></div>
+        </div>
+    </div>
+
+    <!-- Rotom Config Modal -->
+    <div x-show="showRotomConfigModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" x-cloak>
+        <div class="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto"
+            @click.away="showRotomConfigModal = false">
+            <div class="flex justify-between items-center px-6 py-4 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg x-show="!rotomConfigLoading" class="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    <svg x-show="rotomConfigLoading" class="animate-spin w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Rotom Config –
+                    <span class="text-blue-300" x-text="rotomConfigDevice.display_name"></span>
+                    <span x-show="rotomConfigLoading" class="text-sm font-normal text-gray-400">Reading from device...</span>
+                </h3>
+                <button @click="showRotomConfigModal = false" class="text-gray-400 hover:text-gray-200">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <form action="/devices/save-rotom-config" method="post" class="p-6 space-y-5">
+                <input type="hidden" name="device_ip" :value="rotomConfigDevice.ip">
+
+                <!-- Toggle fields -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Set to Rotom mode -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Set to Rotom mode</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="IsRotomMode" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.IsRotomMode">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- GMO Boost -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">GMO Boost</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomRpcJailMode" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomRpcJailMode">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- Try Auto Start -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Try Auto Start</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomTryAutoStart" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomTryAutoStart">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- Check for forced pgo versions -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Check for forced pgo versions</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomCheckPgoForced" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomCheckPgoForced">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- Enable Commands -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Enable Commands</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomUsesCmds" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomUsesCmds">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- Try to ignore Unity -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Try to ignore Unity</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomIgnoreUnity" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomIgnoreUnity">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- Ignore Delays -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">Ignore Delays</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomIgnoreDelays" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomIgnoreDelays">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                    <!-- uses real public ip -->
+                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
+                        <span class="text-sm font-medium text-gray-300">uses real public ip</span>
+                        <div class="relative ml-3 shrink-0">
+                            <input type="checkbox" name="RotomUseRealPublicIp" class="sr-only peer"
+                                x-model="rotomConfigDevice.furtif_config.RotomUseRealPublicIp">
+                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- Text / number fields -->
+                <div class="space-y-4">
+                    <!-- Secret rotom header (password) -->
+                    <div x-data="{ showSecret: false }">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Secret rotom header</label>
+                        <div class="relative">
+                            <input :type="showSecret ? 'text' : 'password'" name="RotomSecret"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 pr-10"
+                                x-model="rotomConfigDevice.furtif_config.RotomSecret"
+                                placeholder="Leave empty if not required">
+                            <button type="button" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-200"
+                                @click="showSecret = !showSecret">
+                                <svg x-show="!showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                </svg>
+                                <svg x-show="showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- EndPoint Rotom -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">EndPoint Rotom</label>
+                        <input type="text" name="RotomURL"
+                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                            x-model="rotomConfigDevice.furtif_config.RotomURL"
+                            placeholder="ws://192.168.1.10:7070/">
+                    </div>
+
+                    <!-- Rotom Device Name -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Rotom Device Name</label>
+                        <input type="text" name="RotomDeviceName"
+                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                            x-model="rotomConfigDevice.furtif_config.RotomDeviceName"
+                            placeholder="e.g. Pixel5">
+                    </div>
+
+                    <!-- Numeric fields -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Rotom Delay Loader -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">
+                                Rotom Delay Loader
+                                <span class="text-gray-500 font-normal">(3–30)</span>
+                            </label>
+                            <input type="number" name="RotomDelayLoader" min="3" max="30"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                x-model.number="rotomConfigDevice.furtif_config.RotomDelayLoader">
+                        </div>
+                        <!-- Max Worker Limit -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">
+                                Max Worker Limit
+                                <span class="text-gray-500 font-normal">(1–250)</span>
+                            </label>
+                            <input type="number" name="RotomMaxWorkers" min="1" max="250"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                x-model.number="rotomConfigDevice.furtif_config.RotomMaxWorkers">
+                        </div>
+                    </div>
+
+                    <!-- Package Name -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Package Name</label>
+                        <select name="PackageName"
+                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                            x-model="rotomConfigDevice.furtif_config.PackageName">
+                            <option value="com.nianticlabs.pokemongo">com.nianticlabs.pokemongo</option>
+                            <option value="com.nianticlabs.pokemongo.ares">com.nianticlabs.pokemongo.ares</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Buttons -->
+                <div class="flex justify-end gap-3 pt-2 border-t border-gray-700">
+                    <button type="button" @click="showRotomConfigModal = false"
+                        class="border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2">
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                        Save & Push to Device
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -722,6 +1328,138 @@
         }
     }
 
+    // Alpine.js component for APK upload
+    function apkUpload() {
+        return {
+            selectedFile: null,
+            uploading: false,
+            uploadProgress: 0,
+            uploadSuccess: false,
+            uploadError: null,
+            uploadMessage: '',
+            localVersions: [],
+            apkType: 'google',
+
+            init() {
+                this.loadLocalVersions();
+            },
+
+            onFileSelected(event) {
+                const file = event.target.files[0];
+                if (!file) { this.selectedFile = null; return; }
+
+                const fileName = file.name.toLowerCase();
+                const isApkm = fileName.endsWith('.apkm');
+                const isApk = fileName.endsWith('.apk');
+
+                // Validate based on selected type
+                if (this.apkType === 'google' && !isApkm) {
+                    this.uploadError = 'For Google type, only .apkm files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+                if (this.apkType === 'samsung' && !isApk) {
+                    this.uploadError = 'For Samsung type, only .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+                if (!isApkm && !isApk) {
+                    this.uploadError = 'Only .apkm or .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+
+                if (file.size > 300 * 1024 * 1024) {
+                    this.uploadError = 'File is too large. Maximum size is 300MB.';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+
+                this.uploadError = null;
+                this.uploadSuccess = false;
+                this.selectedFile = file;
+            },
+
+            formatSize(bytes) {
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            },
+
+            async uploadApk() {
+                if (!this.selectedFile || this.uploading) return;
+
+                this.uploading = true;
+                this.uploadProgress = 0;
+                this.uploadSuccess = false;
+                this.uploadError = null;
+
+                const formData = new FormData();
+                formData.append('file', this.selectedFile);
+
+                try {
+                    const result = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+
+                        xhr.upload.addEventListener('progress', (e) => {
+                            if (e.lengthComputable) {
+                                this.uploadProgress = Math.round((e.loaded / e.total) * 100);
+                            }
+                        });
+
+                        xhr.addEventListener('load', () => {
+                            try {
+                                const data = JSON.parse(xhr.responseText);
+                                if (xhr.status >= 200 && xhr.status < 300) {
+                                    resolve(data);
+                                } else {
+                                    reject(data.error || 'Upload failed');
+                                }
+                            } catch (e) {
+                                reject('Invalid server response');
+                            }
+                        });
+
+                        xhr.addEventListener('error', () => reject('Network error during upload'));
+                        xhr.addEventListener('timeout', () => reject('Upload timed out'));
+
+                        xhr.open('POST', '/pogo/upload-apk');
+                        xhr.timeout = 300000;
+                        xhr.send(formData);
+                    });
+
+                    this.uploadSuccess = true;
+                    this.uploadMessage = result.message || 'Upload successful';
+                    this.selectedFile = null;
+                    this.loadLocalVersions();
+
+                    setTimeout(() => { this.uploadSuccess = false; }, 10000);
+                } catch (error) {
+                    this.uploadError = typeof error === 'string' ? error : 'Upload failed. Please try again.';
+                } finally {
+                    this.uploading = false;
+                }
+            },
+
+            async loadLocalVersions() {
+                try {
+                    // Load all versions (both Google and Samsung)
+                    const res = await fetch(`/api/pogo-local-versions?apk_type=all`);
+                    const data = await res.json();
+                    this.localVersions = data.versions || [];
+                } catch (e) {
+                    this.localVersions = [];
+                }
+            }
+        };
+    }
+
+    // Device data for Rotom config modal
+    const devicesData = {{ config.devices | tojson }};
+
     // Alpine.js component for settings page
     function settingsPage() {
         return {
@@ -729,6 +1467,132 @@
             cacheStatus: null,
             newDeviceIp: '',
             isSubmitting: false,
+
+            // Rotom config modal
+            showRotomConfigModal: false,
+            rotomConfigDevice: {
+                ip: '',
+                display_name: '',
+                furtif_config: {
+                    IsRotomMode: true,
+                    RotomSecret: '',
+                    RotomURL: '',
+                    RotomDeviceName: '',
+                    RotomDelayLoader: 3,
+                    RotomMaxWorkers: 60,
+                    RotomTryAutoStart: false,
+                    RotomRpcJailMode: true,
+                    RotomCheckPgoForced: false,
+                    RotomUsesCmds: true,
+                    RotomIgnoreUnity: true,
+                    RotomIgnoreDelays: false,
+                    RotomUseRealPublicIp: true,
+                    PackageName: 'com.nianticlabs.pokemongo'
+                }
+            },
+
+            rotomConfigLoading: false,
+
+            async openRotomConfig(deviceIp) {
+                const device = devicesData.find(d => d.ip === deviceIp);
+                if (!device) return;
+                const defaults = {
+                    IsRotomMode: true,
+                    RotomSecret: '',
+                    RotomURL: '',
+                    RotomDeviceName: device.display_name || '',
+                    RotomDelayLoader: 3,
+                    RotomMaxWorkers: 60,
+                    RotomTryAutoStart: false,
+                    RotomRpcJailMode: true,
+                    RotomCheckPgoForced: false,
+                    RotomUsesCmds: true,
+                    RotomIgnoreUnity: true,
+                    RotomIgnoreDelays: false,
+                    RotomUseRealPublicIp: true,
+                    PackageName: 'com.nianticlabs.pokemongo'
+                };
+                // Show modal immediately with stored/default values
+                this.rotomConfigDevice = {
+                    ip: device.ip,
+                    display_name: device.display_name || device.ip,
+                    furtif_config: Object.assign({}, defaults, device.furtif_config || {})
+                };
+                this.rotomConfigLoading = true;
+                this.showRotomConfigModal = true;
+
+                // Fetch live values from device via ADB
+                try {
+                    const res = await fetch('/devices/rotom-config?ip=' + encodeURIComponent(deviceIp));
+                    if (res.ok) {
+                        const liveConfig = await res.json();
+                        if (!liveConfig.error) {
+                            this.rotomConfigDevice.furtif_config = Object.assign({}, defaults, liveConfig);
+                        }
+                    }
+                } catch (e) {
+                    // Keep stored values on error
+                } finally {
+                    this.rotomConfigLoading = false;
+                }
+            },
+
+            // Discord bot status
+            discordStatus: null,
+            discordBotUsername: '',
+            discordImportError: '',
+            discordPythonPath: '',
+            discordRestarting: false,
+
+            async loadDiscordStatus() {
+                try {
+                    const res = await fetch('/discord-bot/status');
+                    const data = await res.json();
+                    this.discordStatus = data.status;
+                    this.discordBotUsername = data.username || '';
+                    this.discordImportError = data.error || '';
+                    this.discordPythonPath = data.python_path || '';
+                } catch (e) {
+                    this.discordStatus = 'offline';
+                }
+            },
+
+            async restartDiscordBot() {
+                this.discordRestarting = true;
+                this.discordStatus = 'connecting';
+                try {
+                    await fetch('/discord-bot/restart', { method: 'POST' });
+                    // Poll until online or error (max 15s)
+                    let attempts = 0;
+                    const poll = async () => {
+                        attempts++;
+                        await this.loadDiscordStatus();
+                        if (this.discordStatus === 'connecting' && attempts < 30) {
+                            setTimeout(poll, 500);
+                        } else {
+                            this.discordRestarting = false;
+                        }
+                    };
+                    setTimeout(poll, 1000);
+                } catch (e) {
+                    this.discordRestarting = false;
+                    await this.loadDiscordStatus();
+                }
+            },
+
+            async saveSettingsAndRestartBot(form) {
+                const formData = new FormData(form);
+                const token = formData.get('discord_bot_token') || '';
+                try {
+                    await fetch('/settings/save', { method: 'POST', body: formData });
+                } catch (e) {
+                    // Ignore fetch errors from redirect
+                }
+                if (token.trim()) {
+                    await this.restartDiscordBot();
+                }
+                window.location.href = '/settings?success=Settings saved';
+            },
 
             // Setup state
             setupId: null,
@@ -923,6 +1787,7 @@
 
             // Auto-dismiss alerts after 5 seconds
             initAlerts() {
+                this.loadDiscordStatus();
                 setTimeout(() => {
                     const successAlert = document.getElementById('success-alert');
                     const errorAlert = document.getElementById('error-alert');
