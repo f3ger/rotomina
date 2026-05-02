@@ -482,6 +482,67 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 Module Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- Module Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">Module Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure which GitHub repositories to fetch module updates from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pif_module_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-module-source" method="post" class="inline">
+                                        <input type="hidden" name="repo" value="{{ source.repo }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">{{ source.repo }}</div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-module-source" method="post" class="inline">
+                                    <input type="hidden" name="repo" value="{{ source.repo }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New Source Form -->
+                        <form action="/settings/add-module-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., My Custom Fork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., username/PlayIntegrityFork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 
@@ -508,6 +569,96 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 PoGO Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- PoGO Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">PoGO Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure where to fetch Pokémon GO APKs from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pogo_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-pogo-source" method="post" class="inline">
+                                        <input type="hidden" name="source_name" value="{{ source.name }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">
+                                            {% if source.type == 'github' %}
+                                            {{ source.repo }} (GitHub)
+                                            {% elif source.type == 'mirror' %}
+                                            {{ source.url }} (Mirror)
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-pogo-source" method="post" class="inline">
+                                    <input type="hidden" name="source_name" value="{{ source.name }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New PoGO Source Form -->
+                        <form action="/settings/add-pogo-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., Helium Project" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Type</label>
+                                    <select name="source_type" id="pogoSourceType" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                                        onchange="togglePogoSourceFields()">
+                                        <option value="">Select type...</option>
+                                        <option value="mirror">Mirror (index.json)</option>
+                                        <option value="github">GitHub Releases</option>
+                                    </select>
+                                </div>
+                                <div id="mirrorUrlField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">Mirror URL</label>
+                                    <input type="url" name="source_url" placeholder="https://mirror.example.com"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div id="githubRepoField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., The-Helium-Project/pogo-releases"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
+
+                        <script>
+                        function togglePogoSourceFields() {
+                            const type = document.getElementById('pogoSourceType').value;
+                            document.getElementById('mirrorUrlField').style.display = type === 'mirror' ? 'block' : 'none';
+                            document.getElementById('githubRepoField').style.display = type === 'github' ? 'block' : 'none';
+                        }
+                        </script>
                     </div>
                 </div>
             </div>
@@ -521,22 +672,37 @@
         </div>
         <div class="p-6">
             <p class="text-sm text-gray-400 mb-4">
-                Upload a .apkm file manually when a version is not available on the Unown mirror.
+                Upload a .apkm (Google) or .apk (Samsung) file manually when a version is not available on the mirror.
                 The uploaded APK will be available for installation on all devices.
             </p>
 
+            <!-- APK Type Selector -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-300 mb-2">APK Type</label>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="google" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Google (G) - .apkm</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" x-model="apkType" value="samsung" class="text-blue-600 focus:ring-blue-500" :disabled="uploading">
+                        <span class="text-sm text-gray-300">Samsung (S) - .apk</span>
+                    </label>
+                </div>
+            </div>
+
             <!-- File input -->
             <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-300 mb-2">Select .apkm file</label>
+                <label class="block text-sm font-medium text-gray-300 mb-2" x-text="apkType === 'google' ? 'Select .apkm file (Google)' : 'Select .apk file (Samsung)'"></label>
                 <label class="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
                     :class="{ 'border-blue-500 bg-blue-900/20': selectedFile }">
-                    <input type="file" accept=".apkm" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
+                    <input type="file" :accept="apkType === 'google' ? '.apkm' : '.apk'" class="hidden" @change="onFileSelected($event)" :disabled="uploading">
                     <div class="text-center">
                         <svg class="mx-auto h-8 w-8 text-gray-500 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                         </svg>
-                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : 'Click to select .apkm file'"></span>
+                        <span class="text-sm text-gray-400" x-text="selectedFile ? selectedFile.name + ' (' + formatSize(selectedFile.size) + ')' : (apkType === 'google' ? 'Click to select .apkm file' : 'Click to select .apk file')"></span>
                     </div>
                 </label>
             </div>
@@ -602,12 +768,15 @@
 
             <!-- Locally available versions -->
             <div class="mt-6 border-t border-gray-700 pt-4">
-                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions</h4>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">Locally Available Versions (All Types)</h4>
                 <div x-show="localVersions.length === 0" class="text-sm text-gray-500">No locally stored APK versions found.</div>
                 <div x-show="localVersions.length > 0" class="space-y-1">
-                    <template x-for="v in localVersions" :key="v.version">
+                    <template x-for="v in localVersions" :key="v.version + '-' + (v.apk_type || 'google')">
                         <div class="flex items-center justify-between text-sm bg-gray-800/40 border border-gray-700 rounded px-3 py-2">
-                            <span class="text-gray-300" x-text="v.version"></span>
+                            <span class="text-gray-300 flex items-center gap-2">
+                                <span x-text="v.version"></span>
+                                <span class="text-xs px-1.5 py-0.5 rounded" :class="v.type_label === 'S' ? 'bg-purple-600 text-white' : 'bg-blue-600 text-white'" x-text="v.type_label || 'G'"></span>
+                            </span>
                             <span class="text-gray-500 text-xs" x-text="v.size_mb + ' MB'"></span>
                         </div>
                     </template>
@@ -1120,6 +1289,7 @@
             uploadError: null,
             uploadMessage: '',
             localVersions: [],
+            apkType: 'google',
 
             init() {
                 this.loadLocalVersions();
@@ -1129,12 +1299,30 @@
                 const file = event.target.files[0];
                 if (!file) { this.selectedFile = null; return; }
 
-                if (!file.name.toLowerCase().endsWith('.apkm')) {
-                    this.uploadError = 'Only .apkm files are accepted';
+                const fileName = file.name.toLowerCase();
+                const isApkm = fileName.endsWith('.apkm');
+                const isApk = fileName.endsWith('.apk');
+
+                // Validate based on selected type
+                if (this.apkType === 'google' && !isApkm) {
+                    this.uploadError = 'For Google type, only .apkm files are accepted';
                     this.selectedFile = null;
                     event.target.value = '';
                     return;
                 }
+                if (this.apkType === 'samsung' && !isApk) {
+                    this.uploadError = 'For Samsung type, only .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+                if (!isApkm && !isApk) {
+                    this.uploadError = 'Only .apkm or .apk files are accepted';
+                    this.selectedFile = null;
+                    event.target.value = '';
+                    return;
+                }
+
                 if (file.size > 300 * 1024 * 1024) {
                     this.uploadError = 'File is too large. Maximum size is 300MB.';
                     this.selectedFile = null;
@@ -1209,7 +1397,8 @@
 
             async loadLocalVersions() {
                 try {
-                    const res = await fetch('/api/pogo-local-versions');
+                    // Load all versions (both Google and Samsung)
+                    const res = await fetch(`/api/pogo-local-versions?apk_type=all`);
                     const data = await res.json();
                     this.localVersions = data.versions || [];
                 } catch (e) {
