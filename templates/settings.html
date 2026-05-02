@@ -482,6 +482,67 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 Module Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- Module Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">Module Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure which GitHub repositories to fetch module updates from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pif_module_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-module-source" method="post" class="inline">
+                                        <input type="hidden" name="repo" value="{{ source.repo }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">{{ source.repo }}</div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-module-source" method="post" class="inline">
+                                    <input type="hidden" name="repo" value="{{ source.repo }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New Source Form -->
+                        <form action="/settings/add-module-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., My Custom Fork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., username/PlayIntegrityFork" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
 
@@ -508,6 +569,96 @@
                                 class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium">Save
                                 PoGO Settings</button>
                         </form>
+
+                        <hr class="border-gray-700 my-4">
+
+                        <!-- PoGO Sources Management -->
+                        <h4 class="text-md font-medium text-white mb-3">PoGO Sources</h4>
+                        <p class="text-sm text-gray-400 mb-3">Configure where to fetch Pokémon GO APKs from.</p>
+
+                        <div class="space-y-2 mb-4">
+                            {% for source in config.pogo_sources %}
+                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
+                                <div class="flex items-center gap-3">
+                                    <form action="/settings/toggle-pogo-source" method="post" class="inline">
+                                        <input type="hidden" name="source_name" value="{{ source.name }}">
+                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </button>
+                                    </form>
+                                    <div>
+                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
+                                        <div class="text-xs text-gray-400">
+                                            {% if source.type == 'github' %}
+                                            {{ source.repo }} (GitHub)
+                                            {% elif source.type == 'mirror' %}
+                                            {{ source.url }} (Mirror)
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% if source.is_default %}
+                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
+                                    {% endif %}
+                                </div>
+                                {% if not source.is_default %}
+                                <form action="/settings/delete-pogo-source" method="post" class="inline">
+                                    <input type="hidden" name="source_name" value="{{ source.name }}">
+                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
+                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- Add New PoGO Source Form -->
+                        <form action="/settings/add-pogo-source" method="post" class="border-t border-gray-700 pt-4">
+                            <h5 class="text-sm font-medium text-white mb-3">Add New Source</h5>
+                            <div class="grid grid-cols-1 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Name</label>
+                                    <input type="text" name="source_name" placeholder="e.g., Helium Project" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Source Type</label>
+                                    <select name="source_type" id="pogoSourceType" required
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                                        onchange="togglePogoSourceFields()">
+                                        <option value="">Select type...</option>
+                                        <option value="mirror">Mirror (index.json)</option>
+                                        <option value="github">GitHub Releases</option>
+                                    </select>
+                                </div>
+                                <div id="mirrorUrlField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">Mirror URL</label>
+                                    <input type="url" name="source_url" placeholder="https://mirror.example.com"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <div id="githubRepoField" style="display: none;">
+                                    <label class="block text-xs text-gray-400 mb-1">GitHub Repository (owner/repo)</label>
+                                    <input type="text" name="source_repo" placeholder="e.g., The-Helium-Project/pogo-releases"
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+                                </div>
+                                <button type="submit"
+                                    class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                                    Add Source
+                                </button>
+                            </div>
+                        </form>
+
+                        <script>
+                        function togglePogoSourceFields() {
+                            const type = document.getElementById('pogoSourceType').value;
+                            document.getElementById('mirrorUrlField').style.display = type === 'mirror' ? 'block' : 'none';
+                            document.getElementById('githubRepoField').style.display = type === 'github' ? 'block' : 'none';
+                        }
+                        </script>
                     </div>
                 </div>
             </div>

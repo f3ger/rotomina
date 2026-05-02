@@ -621,7 +621,24 @@ def load_config():
         "users": [],
         "discord_webhook_url": "",
         "pif_auto_update_enabled": True,
-        "pogo_auto_update_enabled": True
+        "pogo_auto_update_enabled": True,
+        "pif_module_sources": [
+            {
+                "name": "PlayIntegrityFork (Official)",
+                "repo": "osm0sis/PlayIntegrityFork",
+                "enabled": True,
+                "is_default": True
+            }
+        ],
+        "pogo_sources": [
+            {
+                "name": "UnownHash Mirror",
+                "type": "mirror",
+                "url": "https://mirror.unownhash.com",
+                "enabled": True,
+                "is_default": True
+            }
+        ]
     }
 
     with config_lock:
@@ -671,6 +688,23 @@ def load_config():
         config.setdefault("discord_bot_channel_id", "")
         config.setdefault("discord_bot_role_id", "")
         config.setdefault("discord_bot_notify_channel_id", "")
+        config.setdefault("pif_module_sources", [
+            {
+                "name": "PlayIntegrityFork (Official)",
+                "repo": "osm0sis/PlayIntegrityFork",
+                "enabled": True,
+                "is_default": True
+            }
+        ])
+        config.setdefault("pogo_sources", [
+            {
+                "name": "UnownHash Mirror",
+                "type": "mirror",
+                "url": "https://mirror.unownhash.com",
+                "enabled": True,
+                "is_default": True
+            }
+        ])
         return config
 
 def needs_setup() -> bool:
@@ -2210,38 +2244,132 @@ async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# APK Management with UnownHash Mirror
-@ttl_cache(ttl=3600)
-def get_available_versions() -> Dict:
+def fetch_pogo_from_mirror(mirror_url: str, seen_versions: set):
+    """Fetch PoGO versions from a mirror URL"""
     processed = []
-    seen_versions = set()
-
-    # 1. Fetch from Unown mirror
     try:
         response = httpx.get(
-            f"{POGO_MIRROR_URL}/index.json",
+            f"{mirror_url}/index.json",
             timeout=10
         )
         if response.status_code == 200:
             versions_data = response.json()
             for entry in versions_data:
-                if entry["arch"] != DEFAULT_ARCH:
+                if entry.get("arch") != DEFAULT_ARCH:
                     continue
                 clean_version = entry["version"].replace(".apkm", "")
                 if clean_version not in seen_versions:
                     processed.append({
                         "version": clean_version,
                         "filename": f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
-                        "url": f"{POGO_MIRROR_URL}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
+                        "url": f"{mirror_url}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
                         "date": entry.get("date", ""),
-                        "arch": DEFAULT_ARCH
+                        "arch": DEFAULT_ARCH,
+                        "source": mirror_url
                     })
                     seen_versions.add(clean_version)
         else:
             log(f"Mirror returned status code {response.status_code}", None, "ERROR")
     except Exception as e:
-        log(f"Mirror check error: {str(e)}", None, "ERROR")
+        log(f"Mirror check error for {mirror_url}: {str(e)}", None, "ERROR")
+    return processed
 
+def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
+    """Fetch PoGO versions from a GitHub repo releases"""
+    processed = []
+    try:
+        api_url = f"https://api.github.com/repos/{repo}/releases?per_page=10"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        response = httpx.get(api_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            releases = response.json()
+            for release in releases:
+                if not isinstance(release, dict):
+                    continue
+                    
+                tag_name = release.get("tag_name", "").strip()
+                if not tag_name:
+                    continue
+                
+                # Extract version from tag (e.g., "0.409.0" from "v0.409.0" or just "0.409.0")
+                version_match = re.search(r'(\d+\.\d+\.\d+)', tag_name)
+                if not version_match:
+                    continue
+                    
+                version = version_match.group(1)
+                if version in seen_versions:
+                    continue
+                
+                # Find .apkm asset
+                assets = release.get("assets", [])
+                apkm_asset = next(
+                    (asset for asset in assets
+                     if isinstance(asset, dict) and 
+                     asset.get("name", "").endswith(".apkm")),
+                    None
+                )
+                
+                if apkm_asset:
+                    processed.append({
+                        "version": version,
+                        "filename": apkm_asset.get("name"),
+                        "url": apkm_asset.get("browser_download_url"),
+                        "date": release.get("published_at", ""),
+                        "arch": DEFAULT_ARCH,
+                        "source": source_name,
+                        "source_repo": repo
+                    })
+                    seen_versions.add(version)
+                    
+        elif response.status_code == 403:
+            log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
+        elif response.status_code == 404:
+            log(f"GitHub repository not found: {repo}", None, "ERROR")
+        else:
+            log(f"GitHub API HTTP {response.status_code} for {source_name}", None, "API")
+            
+    except Exception as e:
+        log(f"GitHub fetch error for {source_name}: {str(e)}", None, "ERROR")
+    
+    return processed
+
+# APK Management with multiple sources
+@ttl_cache(ttl=3600)
+def get_available_versions() -> Dict:
+    processed = []
+    seen_versions = set()
+    
+    # Get configured sources from config
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    enabled_sources = [s for s in sources if s.get("enabled", True)]
+    
+    if not enabled_sources:
+        log("No enabled PoGO sources found, using default", None, "CONFIG")
+        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": "https://mirror.unownhash.com", "enabled": True}]
+    
+    # 1. Fetch from all enabled sources
+    for source in enabled_sources:
+        source_type = source.get("type", "mirror")
+        source_name = source.get("name", "Unknown")
+        
+        if source_type == "mirror":
+            mirror_url = source.get("url", "")
+            if mirror_url:
+                log(f"Fetching PoGO versions from mirror: {source_name}", None, "API")
+                versions = fetch_pogo_from_mirror(mirror_url, seen_versions)
+                processed.extend(versions)
+        elif source_type == "github":
+            repo = source.get("repo", "")
+            if repo:
+                log(f"Fetching PoGO versions from GitHub: {source_name}", None, "API")
+                versions = fetch_pogo_from_github(repo, source_name, seen_versions)
+                processed.extend(versions)
+    
     # 2. Include locally available APKs not already in the list
     try:
         if APK_DIR.exists():
@@ -2255,7 +2383,8 @@ def get_available_versions() -> Dict:
                             "filename": apkm_file.name,
                             "url": "",
                             "date": "",
-                            "arch": DEFAULT_ARCH
+                            "arch": DEFAULT_ARCH,
+                            "source": "local"
                         })
                         seen_versions.add(local_version)
     except Exception as e:
@@ -4307,31 +4436,16 @@ def clear_github_api_cache():
     github_api_cache.clear()
     log("GitHub API cache cleared", None, "CONFIG")
 
-async def fetch_available_module_versions(module_type="fork"):
-    """Fetches available PlayIntegrityFork versions from GitHub API with caching"""
-    # Check cache first
-    cache_key = "module_versions_fork"
-    current_time = time.time()
-    
-    if cache_key in github_api_cache:
-        cached_data, timestamp = github_api_cache[cache_key]
-        if current_time - timestamp < GITHUB_CACHE_TTL:
-            log(f"Using cached FORK versions ({int((current_time - timestamp)/60)}min old)", None, "VERSION")
-            return cached_data
-    
-    api_url = PIF_GITHUB_API
-    module_dir = PIF_MODULE_DIR
-    
-    module_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Retry configuration
+async def fetch_repo_versions(repo: str, source_name: str, module_type="fork"):
+    """Fetches available versions from a specific GitHub repo"""
+    api_url = f"https://api.github.com/repos/{repo}/releases?per_page=10"
     max_retries = 3
-    timeout_values = [10, 15, 20]  # Progressive timeout
+    timeout_values = [10, 15, 20]
     
     for attempt in range(max_retries):
         try:
             timeout = timeout_values[attempt]
-            log(f"Fetching {module_type.upper()} releases from GitHub (attempt {attempt + 1}/{max_retries})", None, "API")
+            log(f"Fetching releases from {source_name} ({repo}) - attempt {attempt + 1}/{max_retries}", None, "API")
             
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -4347,15 +4461,11 @@ async def fetch_available_module_versions(module_type="fork"):
                 
                 response = await client.get(api_url, headers=headers)
                 
-                # Handle different HTTP status codes
                 if response.status_code == 200:
                     try:
                         releases = response.json()
                         if not releases or not isinstance(releases, list):
-                            log(f"Empty or invalid releases data (attempt {attempt + 1})", None, "API")
-                            if attempt < max_retries - 1:
-                                await asyncio.sleep(2 ** attempt)  # Exponential backoff
-                                continue
+                            log(f"Empty or invalid releases data from {source_name}", None, "API")
                             return []
                         
                         versions = []
@@ -4370,7 +4480,6 @@ async def fetch_available_module_versions(module_type="fork"):
                             version = tag_name.lstrip("v")
                             published_at = release.get("published_at", "")
                             
-                            # Find zip asset with validation
                             assets = release.get("assets", [])
                             if not isinstance(assets, list):
                                 continue
@@ -4390,49 +4499,95 @@ async def fetch_available_module_versions(module_type="fork"):
                                     "published_at": published_at,
                                     "download_url": zip_asset.get("browser_download_url"),
                                     "filename": zip_asset.get("name"),
-                                    "module_type": module_type
+                                    "module_type": module_type,
+                                    "source_name": source_name,
+                                    "source_repo": repo
                                 })
                         
-                        if versions:
-                            versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
-                            log(f"Fetched {len(versions)} {module_type.upper()} versions", None, "VERSION")
-                            # Cache the successful result
-                            github_api_cache[cache_key] = (versions, current_time)
-                            return versions
-                        else:
-                            log(f"No valid releases found (attempt {attempt + 1})", None, "API")
-                            
+                        log(f"Fetched {len(versions)} versions from {source_name}", None, "VERSION")
+                        return versions
+                        
                     except (json.JSONDecodeError, KeyError, TypeError) as e:
-                        log(f"Invalid API response format (attempt {attempt + 1}): {str(e)}", None, "ERROR")
+                        log(f"Invalid API response from {source_name}: {str(e)}", None, "ERROR")
+                        return []
                         
                 elif response.status_code == 403:
-                    log(f"GitHub API rate limit exceeded (attempt {attempt + 1})", None, "API")
+                    log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
                     if attempt < max_retries - 1:
-                        log("Waiting 5 minutes before retry (rate limit)", None, "API")
-                        await asyncio.sleep(300)  # Wait 5 minutes for rate limit reset
+                        await asyncio.sleep(300)
                         continue
                         
                 elif response.status_code == 404:
-                    log(f"GitHub repository not found: {api_url}", None, "ERROR")
-                    return []  # Don't retry for 404
+                    log(f"GitHub repository not found: {repo}", None, "ERROR")
+                    return []
                     
                 else:
-                    log(f"GitHub API HTTP {response.status_code} (attempt {attempt + 1})", None, "API")
+                    log(f"GitHub API HTTP {response.status_code} for {source_name}", None, "API")
                 
         except (httpx.TimeoutException, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
-            log(f"Network timeout (attempt {attempt + 1}): {str(e)}", None, "ERROR")
+            log(f"Network timeout for {source_name}: {str(e)}", None, "ERROR")
         except (httpx.HTTPError, httpx.RequestError) as e:
-            log(f"Network error (attempt {attempt + 1}): {str(e)}", None, "ERROR")
+            log(f"Network error for {source_name}: {str(e)}", None, "ERROR")
         except Exception as e:
-            log(f"Unexpected error (attempt {attempt + 1}): {str(e)}", None, "ERROR")
+            log(f"Unexpected error for {source_name}: {str(e)}", None, "ERROR")
         
-        # Wait before retry (except on last attempt)
         if attempt < max_retries - 1:
             wait_time = 2 ** attempt
-            log(f"Retrying in {wait_time} seconds...", None, "API")
             await asyncio.sleep(wait_time)
     
-    log(f"Failed to fetch {module_type.upper()} versions after {max_retries} attempts", None, "ERROR")
+    log(f"Failed to fetch versions from {source_name} after {max_retries} attempts", None, "ERROR")
+    return []
+
+async def fetch_available_module_versions(module_type="fork"):
+    """Fetches available PlayIntegrityFork versions from all configured GitHub sources with caching"""
+    cache_key = "module_versions_fork"
+    current_time = time.time()
+    
+    # Check cache first
+    if cache_key in github_api_cache:
+        cached_data, timestamp = github_api_cache[cache_key]
+        if current_time - timestamp < GITHUB_CACHE_TTL:
+            log(f"Using cached module versions ({int((current_time - timestamp)/60)}min old)", None, "VERSION")
+            return cached_data
+    
+    # Get enabled sources from config
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    enabled_sources = [s for s in sources if s.get("enabled", True)]
+    
+    if not enabled_sources:
+        log("No enabled module sources found, using default", None, "CONFIG")
+        enabled_sources = [{"name": "PlayIntegrityFork (Official)", "repo": "osm0sis/PlayIntegrityFork", "enabled": True}]
+    
+    PIF_MODULE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Fetch from all enabled sources concurrently
+    all_versions = []
+    tasks = []
+    
+    for source in enabled_sources:
+        repo = source.get("repo", "")
+        name = source.get("name", repo)
+        if repo:
+            tasks.append(fetch_repo_versions(repo, name, module_type))
+    
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, list):
+                all_versions.extend(result)
+            elif isinstance(result, Exception):
+                log(f"Error fetching from source: {result}", None, "ERROR")
+    
+    # Sort all versions by version number (newest first)
+    if all_versions:
+        all_versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
+        log(f"Total versions from all sources: {len(all_versions)}", None, "VERSION")
+        # Cache the successful result
+        github_api_cache[cache_key] = (all_versions, current_time)
+        return all_versions
+    
+    log("No versions found from any source", None, "ERROR")
     return []
 
 async def fetch_available_pif_versions():
@@ -6343,6 +6498,227 @@ def toggle_pogo_autoupdate(request: Request, enabled: Optional[str] = Form(None)
     config["pogo_auto_update_enabled"] = enabled is not None
     save_config(config)
     
+    return RedirectResponse(url="/settings", status_code=302)
+
+@app.get("/api/module-sources")
+def get_module_sources(request: Request):
+    """Get all configured module sources"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+    
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    return {"sources": sources}
+
+def extract_repo_from_url(url_or_repo: str) -> str:
+    """Extract owner/repo from a GitHub URL or return the input if already in correct format"""
+    url_or_repo = url_or_repo.strip()
+    
+    # If it's already in owner/repo format
+    if "/" in url_or_repo and not url_or_repo.startswith("http") and len(url_or_repo.split("/")) == 2:
+        return url_or_repo
+    
+    # Extract from GitHub URL
+    if "github.com" in url_or_repo:
+        # Remove protocol and domain
+        parts = url_or_repo.replace("https://", "").replace("http://", "").split("/")
+        # github.com/owner/repo/... -> owner/repo
+        if len(parts) >= 3 and parts[0] == "github.com":
+            return f"{parts[1]}/{parts[2]}"
+    
+    return url_or_repo  # Return as-is if we can't parse it
+
+@app.post("/settings/add-module-source", response_class=HTMLResponse)
+def add_module_source(
+    request: Request,
+    source_name: str = Form(...),
+    source_repo: str = Form(...)
+):
+    """Add a new module source"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    
+    # Extract repo from URL if needed (handles both "owner/repo" and "https://github.com/owner/repo/...")
+    repo = extract_repo_from_url(source_repo)
+    
+    # Validate repo format (owner/repo)
+    if "/" not in repo or len(repo.split("/")) != 2:
+        return RedirectResponse(url="/settings?error=Invalid+repo+format.+Use+owner/repo", status_code=302)
+    
+    # Check if repo already exists
+    if any(s.get("repo") == repo for s in sources):
+        return RedirectResponse(url="/settings?error=Repository+already+exists", status_code=302)
+    
+    new_source = {
+        "name": source_name,
+        "repo": repo,
+        "enabled": True,
+        "is_default": False
+    }
+    sources.append(new_source)
+    config["pif_module_sources"] = sources
+    save_config(config)
+    
+    # Clear cache to fetch from new source
+    clear_github_api_cache()
+    
+    log(f"Added module source: {source_name} ({repo})", None, "CONFIG")
+    return RedirectResponse(url="/settings", status_code=302)
+
+@app.post("/settings/delete-module-source", response_class=HTMLResponse)
+def delete_module_source(request: Request, repo: str = Form(...)):
+    """Delete a module source"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    
+    # Find and remove the source
+    sources = [s for s in sources if s.get("repo") != repo]
+    config["pif_module_sources"] = sources
+    save_config(config)
+    
+    # Clear cache
+    clear_github_api_cache()
+    
+    log(f"Deleted module source: {repo}", None, "CONFIG")
+    return RedirectResponse(url="/settings", status_code=302)
+
+@app.post("/settings/toggle-module-source", response_class=HTMLResponse)
+def toggle_module_source(request: Request, repo: str = Form(...), enabled: str = Form(...)):
+    """Toggle a module source enabled/disabled"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    
+    for source in sources:
+        if source.get("repo") == repo:
+            source["enabled"] = enabled == "true"
+            break
+    
+    config["pif_module_sources"] = sources
+    save_config(config)
+    
+    # Clear cache
+    clear_github_api_cache()
+    
+    log(f"Toggled module source {repo}: {enabled}", None, "CONFIG")
+    return RedirectResponse(url="/settings", status_code=302)
+
+# PoGO Source Management API
+@app.get("/api/pogo-sources")
+def get_pogo_sources(request: Request):
+    """Get all configured PoGO sources"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+    
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    return {"sources": sources}
+
+@app.post("/settings/add-pogo-source", response_class=HTMLResponse)
+def add_pogo_source(
+    request: Request,
+    source_name: str = Form(...),
+    source_type: str = Form(...),
+    source_url: str = Form(""),
+    source_repo: str = Form("")
+):
+    """Add a new PoGO source"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    
+    # Validate based on type
+    if source_type == "mirror":
+        if not source_url:
+            return RedirectResponse(url="/settings?error=URL+required+for+mirror", status_code=302)
+        # Check if URL already exists
+        if any(s.get("url") == source_url and s.get("type") == "mirror" for s in sources):
+            return RedirectResponse(url="/settings?error=Mirror+URL+already+exists", status_code=302)
+        repo = None
+    elif source_type == "github":
+        # Extract repo from URL if needed (handles both "owner/repo" and "https://github.com/owner/repo/...")
+        repo = extract_repo_from_url(source_repo)
+        if not repo or "/" not in repo or len(repo.split("/")) != 2:
+            return RedirectResponse(url="/settings?error=Invalid+repo+format.+Use+owner/repo", status_code=302)
+        # Check if repo already exists
+        if any(s.get("repo") == repo for s in sources):
+            return RedirectResponse(url="/settings?error=Repository+already+exists", status_code=302)
+    else:
+        return RedirectResponse(url="/settings?error=Invalid+source+type", status_code=302)
+    
+    new_source = {
+        "name": source_name,
+        "type": source_type,
+        "enabled": True,
+        "is_default": False
+    }
+    
+    if source_type == "mirror":
+        new_source["url"] = source_url
+    elif source_type == "github":
+        new_source["repo"] = repo
+    
+    sources.append(new_source)
+    config["pogo_sources"] = sources
+    save_config(config)
+    
+    # Clear cache to fetch from new source
+    get_available_versions.cache_clear()
+    
+    log(f"Added PoGO source: {source_name} ({source_type})", None, "CONFIG")
+    return RedirectResponse(url="/settings", status_code=302)
+
+@app.post("/settings/delete-pogo-source", response_class=HTMLResponse)
+def delete_pogo_source(request: Request, source_name: str = Form(...)):
+    """Delete a PoGO source"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    
+    # Find and remove the source by name
+    sources = [s for s in sources if s.get("name") != source_name]
+    config["pogo_sources"] = sources
+    save_config(config)
+    
+    # Clear cache
+    get_available_versions.cache_clear()
+    
+    log(f"Deleted PoGO source: {source_name}", None, "CONFIG")
+    return RedirectResponse(url="/settings", status_code=302)
+
+@app.post("/settings/toggle-pogo-source", response_class=HTMLResponse)
+def toggle_pogo_source(request: Request, source_name: str = Form(...), enabled: str = Form(...)):
+    """Toggle a PoGO source enabled/disabled"""
+    if redirect := require_login(request):
+        return redirect
+    
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    
+    for source in sources:
+        if source.get("name") == source_name:
+            source["enabled"] = enabled == "true"
+            break
+    
+    config["pogo_sources"] = sources
+    save_config(config)
+    
+    # Clear cache
+    get_available_versions.cache_clear()
+    
+    log(f"Toggled PoGO source {source_name}: {enabled}", None, "CONFIG")
     return RedirectResponse(url="/settings", status_code=302)
 
 @app.get("/update-status")
