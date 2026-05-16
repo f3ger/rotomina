@@ -5984,8 +5984,8 @@ def root(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if needs_setup():
-        return templates.TemplateResponse("login.html", {"request": request, "setup_mode": True})
-    return templates.TemplateResponse("login.html", {"request": request})
+        return templates.TemplateResponse(request, "login.html", {"setup_mode": True})
+    return templates.TemplateResponse(request, "login.html")
 
 @app.post("/login", response_class=HTMLResponse)
 def login_action(request: Request, username: str = Form(...), password: str = Form(...)):
@@ -6013,8 +6013,7 @@ def login_action(request: Request, username: str = Form(...), password: str = Fo
         return HTMLResponse(content=error_message)
     
     # Regular form submission
-    return templates.TemplateResponse("login.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "login.html", {
         "error": "Invalid credentials"
     })
 
@@ -6032,8 +6031,7 @@ def setup_action(request: Request, username: str = Form(...), password: str = Fo
         errors.append("Passwords do not match")
 
     if errors:
-        return templates.TemplateResponse("login.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "login.html", {
             "setup_mode": True,
             "error": ". ".join(errors)
         })
@@ -6121,8 +6119,7 @@ async def status_page(request: Request, apk_type: str = "google"):
             "update_info": update_info
         })
     
-    return templates.TemplateResponse("status.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "status.html", {
         "username": request.session.get("username", ""),
         "devices": devices,
         "config": config,
@@ -6153,8 +6150,7 @@ async def settings_page(request: Request):
             log(f"Error validating token in settings: {e}", None, "ERROR")
             token_valid = False
     
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", {
         "config": config,
         "token_valid": token_valid
     })
@@ -7135,11 +7131,10 @@ async def websocket_htmx_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         status_data = await get_status_data()
-        html_response = templates.TemplateResponse(
-            "partials/device_table.html", 
-            {"request": {}, "devices": status_data["devices"]}
+        html = templates.env.get_template("partials/device_table.html").render(
+            devices=status_data["devices"]
         )
-        await websocket.send_text(html_response.body.decode('utf-8'))
+        await websocket.send_text(html)
 
         while True:
             try:
@@ -7147,11 +7142,10 @@ async def websocket_htmx_endpoint(websocket: WebSocket):
 
                 if data == "refresh":
                     status_data = await get_status_data()
-                    html_response = templates.TemplateResponse(
-                        "partials/device_table.html",
-                        {"request": {}, "devices": status_data["devices"]}
+                    html = templates.env.get_template("partials/device_table.html").render(
+                        devices=status_data["devices"]
                     )
-                    await websocket.send_text(html_response.body.decode('utf-8'))
+                    await websocket.send_text(html)
             except asyncio.TimeoutError:
                 await asyncio.sleep(1)
     except WebSocketDisconnect:
