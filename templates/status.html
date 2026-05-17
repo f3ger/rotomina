@@ -147,23 +147,21 @@
                         <div x-show="open" @click.away="open = false"
                             class="origin-top-left absolute left-0 mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-20">
                             <div class="py-1 divide-y divide-gray-700">
-                                <!-- Google versions -->
-                                <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoLatest)"
-                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                    <span x-text="'G ' + pogoLatest"></span>
-                                    <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
-                                </button>
-                                <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoPrevious)"
-                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                    <span x-text="'G ' + pogoPrevious"></span>
-                                    <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
-                                </button>
-                                <!-- Samsung version (latest only) -->
-                                <button type="button" @click="apkType = 'samsung'; updateDevicePogo(device.ip, pogoLatest)"
-                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                    <span x-text="'S ' + pogoLatest"></span>
-                                    <span class="text-xs px-1.5 py-0.5 rounded bg-purple-600 text-white">Samsung</span>
-                                </button>
+                                <!-- All available versions -->
+                                <template x-for="version in pogoVersions" :key="`${version.type_label}-${version.version}`">
+                                    <button type="button" @click="apkType = version.apk_type; updateDevicePogo(device.ip, version.version)"
+                                        class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                        <span x-text="version.type_label + ' ' + version.version"></span>
+                                        <span class="text-xs px-1.5 py-0.5 rounded text-white"
+                                            :class="version.apk_type === 'google' ? 'bg-blue-600' : 'bg-purple-600'"
+                                            x-text="version.apk_type === 'google' ? 'Google' : 'Samsung'"></span>
+                                    </button>
+                                </template>
+                                <template x-if="pogoVersions.length === 0">
+                                    <div class="px-4 py-2 text-sm text-gray-500 text-center">
+                                        Loading versions...
+                                    </div>
+                                </template>
                             </div>
                         </div>
                     </div>
@@ -449,23 +447,21 @@
                                     <div x-show="open" @click.away="open = false"
                                         class="origin-top-right absolute mt-2 w-48 rounded-md shadow-lg bg-gray-900 ring-1 ring-black ring-opacity-5 z-10">
                                         <div class="py-1 divide-y divide-gray-700">
-                                            <!-- Google versions -->
-                                            <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoLatest)"
-                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                                <span x-text="'G ' + pogoLatest"></span>
-                                                <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
-                                            </button>
-                                            <button type="button" @click="apkType = 'google'; updateDevicePogo(device.ip, pogoPrevious)"
-                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                                <span x-text="'G ' + pogoPrevious"></span>
-                                                <span class="text-xs px-1.5 py-0.5 rounded bg-blue-600 text-white">Google</span>
-                                            </button>
-                                            <!-- Samsung version (latest only) -->
-                                            <button type="button" @click="apkType = 'samsung'; updateDevicePogo(device.ip, pogoLatest)"
-                                                class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
-                                                <span x-text="'S ' + pogoLatest"></span>
-                                                <span class="text-xs px-1.5 py-0.5 rounded bg-purple-600 text-white">Samsung</span>
-                                            </button>
+                                            <!-- All available versions -->
+                                            <template x-for="version in pogoVersions" :key="`${version.type_label}-${version.version}`">
+                                                <button type="button" @click="apkType = version.apk_type; updateDevicePogo(device.ip, version.version)"
+                                                    class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 w-full text-left flex items-center justify-between">
+                                                    <span x-text="version.type_label + ' ' + version.version"></span>
+                                                    <span class="text-xs px-1.5 py-0.5 rounded text-white"
+                                                        :class="version.apk_type === 'google' ? 'bg-blue-600' : 'bg-purple-600'"
+                                                        x-text="version.apk_type === 'google' ? 'Google' : 'Samsung'"></span>
+                                                </button>
+                                            </template>
+                                            <template x-if="pogoVersions.length === 0">
+                                                <div class="px-4 py-2 text-sm text-gray-500 text-center">
+                                                    Loading versions...
+                                                </div>
+                                            </template>
                                         </div>
                                     </div>
                                 </div>
@@ -602,6 +598,7 @@
             moduleType: 'all',
             pogoLatest: "N/A",
             pogoPrevious: "N/A",
+            pogoVersions: [],
             pogoAutoUpdateEnabled: false,
             pifAutoUpdateEnabled: false,
             apkType: 'google',
@@ -643,7 +640,23 @@
                     console.error('Error initializing status page data:', e);
                 }
 
+                // Fetch all available PoGO versions for dropdown
+                this.loadPogoVersions();
+
                 this.initWebsocket();
+            },
+
+            // Load all available PoGO versions
+            loadPogoVersions() {
+                fetch('/api/pogo-versions')
+                    .then(response => response.json())
+                    .then(data => {
+                        this.pogoVersions = data.versions || [];
+                        console.log('Loaded PoGO versions:', this.pogoVersions);
+                    })
+                    .catch(error => {
+                        console.error('Error loading PoGO versions:', error);
+                    });
             },
 
             // Initialize websocket connection

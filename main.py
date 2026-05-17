@@ -2471,6 +2471,56 @@ def get_available_samsung_versions() -> List[Dict]:
     
     return processed
 
+
+def get_available_local_google_versions() -> List[Dict]:
+    """Get Google/APKM versions from local APK_DIR only"""
+    processed = []
+    seen_versions = set()
+
+    try:
+        if APK_DIR.exists():
+            for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": apkm_file.name,
+                            "url": "",
+                            "date": "",
+                            "arch": DEFAULT_ARCH,
+                            "source": "local",
+                            "apk_type": "google",
+                            "type_label": "G"
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
+
+    return processed
+
+
+def get_available_local_versions(apk_type: str = "all") -> Dict:
+    """Get available PoGO versions from local APK directories only"""
+    all_versions = []
+
+    if apk_type in ("all", "google"):
+        all_versions.extend(get_available_local_google_versions())
+    if apk_type in ("all", "samsung"):
+        all_versions.extend(get_available_samsung_versions())
+
+    distinct_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return {
+        "latest": distinct_versions[0] if distinct_versions else {},
+        "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
+    }
+
 # APK Management with multiple sources
 @ttl_cache(ttl=3600)
 def get_available_versions(apk_type: str = "all") -> Dict:
@@ -5736,14 +5786,15 @@ async def get_status_data(apk_type: str = "google"):
     config = load_config()
     devices = []
     
-    versions = get_available_versions(apk_type)
+    # Always get local versions only for dropdown display
+    versions = get_available_local_versions("all")
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
 
     current_time = time.time()
     last_version_debug = getattr(get_status_data, 'last_version_debug', 0)
     if not hasattr(get_status_data, 'last_versions') or get_status_data.last_versions != (pogo_latest, pogo_previous) or current_time - last_version_debug > 300:
-        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous}", None, "INFO")
+        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous} (local only)", None, "INFO")
         get_status_data.last_versions = (pogo_latest, pogo_previous)
         get_status_data.last_version_debug = current_time
     
@@ -6075,8 +6126,9 @@ async def status_page(request: Request, apk_type: str = "google"):
             log(f"Error validating token in status: {e}", None, "ERROR")
             token_valid = False
     
-    # Get PoGo version info for buttons (filtered by apk_type)
-    versions = get_available_versions(apk_type)
+    # Get local PoGo versions from local APK directories only
+    log(f"Status page requested with apk_type={apk_type}", None, "DEBUG")
+    versions = get_available_local_versions("all")
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
     
@@ -7074,8 +7126,35 @@ async def api_status(request: Request, apk_type: str = "google"):
     if apk_type not in ("google", "samsung"):
         apk_type = "google"
     
-    status_data = await get_status_data_with_tailwind_classes()
+    log(f"API /status requested with apk_type={apk_type}", None, "DEBUG")
+    status_data = await get_status_data_with_tailwind_classes(apk_type)
     return status_data
+
+@app.get("/api/pogo-versions")
+async def api_pogo_versions(request: Request):
+    """Returns ALL available PoGO versions (Google and Samsung) for dropdown"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+    
+    google_versions = get_available_local_google_versions()
+    samsung_versions = get_available_samsung_versions()
+    
+    # Combine and sort all versions
+    all_versions = []
+    all_versions.extend(google_versions)
+    all_versions.extend(samsung_versions)
+    
+    sorted_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+    
+    return {
+        "versions": sorted_versions,
+        "latest": get_available_local_versions("all").get("latest", {}),
+        "previous": get_available_local_versions("all").get("previous", {})
+    }
 
 @app.get("/api/pif-versions")
 async def api_pif_versions(request: Request):
