@@ -6155,12 +6155,31 @@ async def settings_page(request: Request):
         "token_valid": token_valid
     })
 
-@app.post("/settings/save", response_class=HTMLResponse)
-def settings_save(
+@app.post("/settings/save-api", response_class=HTMLResponse)
+def settings_save_api(
     request: Request,
     rotomApiUrl: str = Form(""),
     rotomApiUser: str = Form(""),
     rotomApiPass: str = Form(""),
+):
+    if redirect := require_login(request):
+        return redirect
+
+    config = load_config()
+    config.update({
+        "rotomApiUrl": rotomApiUrl,
+        "rotomApiUser": rotomApiUser,
+        "rotomApiPass": rotomApiPass,
+    })
+
+    save_config(config)
+    log(f"API settings saved successfully", None, "CONFIG")
+
+    return RedirectResponse(url="/settings?success=API settings saved", status_code=302)
+
+@app.post("/settings/save-discord", response_class=HTMLResponse)
+def settings_save_discord(
+    request: Request,
     discord_webhook_url: str = Form(""),
     discord_bot_token: str = Form(""),
     discord_bot_channel_id: str = Form(""),
@@ -6172,9 +6191,6 @@ def settings_save(
 
     config = load_config()
     config.update({
-        "rotomApiUrl": rotomApiUrl,
-        "rotomApiUser": rotomApiUser,
-        "rotomApiPass": rotomApiPass,
         "discord_webhook_url": discord_webhook_url,
         "discord_bot_token": discord_bot_token,
         "discord_bot_channel_id": discord_bot_channel_id,
@@ -6183,9 +6199,9 @@ def settings_save(
     })
 
     save_config(config)
-    log(f"Settings saved successfully", None, "CONFIG")
+    log(f"Discord settings saved successfully", None, "CONFIG")
 
-    return RedirectResponse(url="/settings", status_code=302)
+    return RedirectResponse(url="/settings?success=Discord settings saved", status_code=302)
 
 @app.post("/settings/save-device-token", response_class=HTMLResponse)
 async def save_device_token(request: Request, device_token: str = Form("")):
