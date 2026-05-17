@@ -2501,6 +2501,38 @@ def get_available_local_google_versions() -> List[Dict]:
     return processed
 
 
+def get_available_mitm_versions() -> List[Dict]:
+    """Get available MITM (MapWorld) versions from local APK directory"""
+    processed = []
+    seen_versions = set()
+    mitm_dir = BASE_DIR / "data" / "apks"
+
+    try:
+        if mitm_dir.exists():
+            for mitm_file in mitm_dir.glob("mapworld_*.apk"):
+                match = re.search(r'mapworld_v(\d+\.\d+)_\d+\.apk', mitm_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": mitm_file.name,
+                            "path": str(mitm_file)
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local MITM files: {str(e)}", None, "ERROR")
+
+    # Sort by version (descending)
+    sorted_versions = sorted(
+        processed,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return sorted_versions
+
+
 def get_available_local_versions(apk_type: str = "all") -> Dict:
     """Get available PoGO versions from local APK directories only"""
     all_versions = []
@@ -6571,6 +6603,39 @@ async def pif_device_update(request: Request, device_ip: str = Form(...), versio
         current_progress = 0
         return RedirectResponse(url="/status?error=Module update failed", status_code=302)
 
+@app.post("/mitm/device-update")
+async def mitm_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...), apk_path: str = Form(...)):
+    if redirect := require_login(request):
+        return redirect
+
+    device_id = format_device_id(device_ip)
+
+    try:
+        apk_file = Path(apk_path)
+        if not apk_file.exists():
+            return {"success": False, "error": f"APK file not found: {apk_path}"}
+
+        log(f"Installing MITM version {version} on device {device_id}", device_id, "UPDATE")
+
+        # Stop MapWorld
+        await stop_apps(device_id, stop_pogo=False, stop_mapworld=True)
+
+        # Install the MITM APK
+        install_cmd = f'adb -s {device_id} install -r "{apk_file}"'
+        result = subprocess.run(install_cmd, shell=True, capture_output=True, text=True, timeout=TimeoutConfig.LONG)
+
+        if result.returncode == 0:
+            log(f"MITM version {version} installed successfully on device {device_id}", device_id, "UPDATE")
+            return {"success": True, "message": f"MITM updated to v{version}"}
+        else:
+            log(f"Failed to install MITM version {version}: {result.stderr}", device_id, "ERROR")
+            return {"success": False, "error": result.stderr}
+
+    except Exception as e:
+        log(f"Error updating MITM on device {device_id}: {str(e)}", device_id, "ERROR")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/pogo/device-update", response_class=HTMLResponse)
 async def pogo_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...), apk_type: str = Form("google")):
     if redirect := require_login(request):
@@ -7135,25 +7200,38 @@ async def api_pogo_versions(request: Request):
     """Returns ALL available PoGO versions (Google and Samsung) for dropdown"""
     if not is_logged_in(request):
         return {"error": "Not authenticated"}
-    
+
     google_versions = get_available_local_google_versions()
     samsung_versions = get_available_samsung_versions()
-    
+
     # Combine and sort all versions
     all_versions = []
     all_versions.extend(google_versions)
     all_versions.extend(samsung_versions)
-    
+
     sorted_versions = sorted(
         all_versions,
         key=lambda x: [int(n) for n in x["version"].split(".")],
         reverse=True
     )
-    
+
     return {
         "versions": sorted_versions,
         "latest": get_available_local_versions("all").get("latest", {}),
         "previous": get_available_local_versions("all").get("previous", {})
+    }
+
+
+@app.get("/api/mitm-versions")
+async def api_mitm_versions(request: Request):
+    """Returns available MITM (MapWorld) versions for dropdown"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+
+    mitm_versions = get_available_mitm_versions()
+
+    return {
+        "versions": mitm_versions
     }
 
 @app.get("/api/pif-versions")
