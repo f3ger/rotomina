@@ -13,7 +13,7 @@ import traceback
 import tempfile
 import os
 import platform
-import hashlib
+import requests
 import base64
 import xml.etree.ElementTree as ET
 from pathlib import Path
