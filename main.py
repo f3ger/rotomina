@@ -951,6 +951,10 @@ async def start_discord_bot():
     except Exception as e:
         log(f"Discord Bot error: {e}", None, "DISCORD")
     finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
         # Clear global reference when bot disconnects
         if _discord_bot_client is client:
             _discord_bot_client = None
@@ -2330,19 +2334,6 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
             for release in releases:
                 if not isinstance(release, dict):
                     continue
-                    
-                tag_name = release.get("tag_name", "").strip()
-                if not tag_name:
-                    continue
-                
-                # Extract version from tag (e.g., "0.409.0" from "v0.409.0" or just "0.409.0")
-                version_match = re.search(r'(\d+\.\d+\.\d+)', tag_name)
-                if not version_match:
-                    continue
-                    
-                version = version_match.group(1)
-                if version in seen_versions:
-                    continue
                 
                 # Find .apkm asset
                 assets = release.get("assets", [])
@@ -2352,18 +2343,32 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
                      asset.get("name", "").endswith(".apkm")),
                     None
                 )
-                
-                if apkm_asset:
-                    processed.append({
-                        "version": version,
-                        "filename": apkm_asset.get("name"),
-                        "url": apkm_asset.get("browser_download_url"),
-                        "date": release.get("published_at", ""),
-                        "arch": DEFAULT_ARCH,
-                        "source": source_name,
-                        "source_repo": repo
-                    })
-                    seen_versions.add(version)
+                if not apkm_asset:
+                    continue
+
+                name = apkm_asset.get("name", "").strip()
+                if not name:
+                    continue
+
+                parsed = parse_pogo_apkm_filename(name)
+                if not parsed:
+                    continue
+
+                version, arch = parsed
+                if version in seen_versions:
+                    continue
+
+                filename = f"com.nianticlabs.pokemongo_{arch}_{version}.apkm"
+                processed.append({
+                    "version": version,
+                    "filename": filename,
+                    "url": apkm_asset.get("browser_download_url"),
+                    "date": release.get("published_at", ""),
+                    "arch": arch,
+                    "source": source_name,
+                    "source_repo": repo
+                })
+                seen_versions.add(version)
                     
         elif response.status_code == 403:
             log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
@@ -2376,6 +2381,33 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
         log(f"GitHub fetch error for {source_name}: {str(e)}", None, "ERROR")
     
     return processed
+
+
+def parse_pogo_apkm_filename(filename: str) -> Optional[Tuple[str, str]]:
+    """Parse PoGO APKM filenames and return (version, arch)."""
+    name = Path(filename).name
+
+    match = re.match(r'^com\.nianticlabs\.pokemongo_([^_]+)_(\d+\.\d+\.\d+)\.apkm$', name)
+    if match:
+        return match.group(2), match.group(1)
+
+    match = re.match(
+        r'^com\.nianticlabs\.pokemongo_(\d+\.\d+\.\d+(?:-[^_]+)?)_([^_]+)\.apkm$',
+        name
+    )
+    if match:
+        version_match = re.search(r'(\d+\.\d+\.\d+)', match.group(1))
+        arch = match.group(2)
+        if version_match:
+            return version_match.group(1), arch
+
+    version_match = re.search(r'(\d+\.\d+\.\d+)', name)
+    arch_match = re.search(r'(arm64-v8a|armeabi-v7a|x86_64|x86)', name)
+    if version_match:
+        return version_match.group(1), arch_match.group(1) if arch_match else DEFAULT_ARCH
+
+    return None
+
 
 def get_available_google_versions() -> List[Dict]:
     """Get Google/APKM versions from configured sources and local files"""
@@ -2421,21 +2453,23 @@ def get_available_google_versions() -> List[Dict]:
     try:
         if APK_DIR.exists():
             for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-                if match:
-                    local_version = match.group(1)
-                    if local_version not in seen_versions:
-                        processed.append({
-                            "version": local_version,
-                            "filename": apkm_file.name,
-                            "url": "",
-                            "date": "",
-                            "arch": DEFAULT_ARCH,
-                            "source": "local",
-                            "apk_type": "google",
-                            "type_label": "G"
-                        })
-                        seen_versions.add(local_version)
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
     except Exception as e:
         log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
     
@@ -2480,21 +2514,23 @@ def get_available_local_google_versions() -> List[Dict]:
     try:
         if APK_DIR.exists():
             for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-                if match:
-                    local_version = match.group(1)
-                    if local_version not in seen_versions:
-                        processed.append({
-                            "version": local_version,
-                            "filename": apkm_file.name,
-                            "url": "",
-                            "date": "",
-                            "arch": DEFAULT_ARCH,
-                            "source": "local",
-                            "apk_type": "google",
-                            "type_label": "G"
-                        })
-                        seen_versions.add(local_version)
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
     except Exception as e:
         log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
 
