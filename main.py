@@ -635,7 +635,7 @@ def load_config():
             {
                 "name": "UnownHash Mirror",
                 "type": "mirror",
-                "url": "https://mirror.unownhash.com",
+                "url": POGO_MIRROR_URL,
                 "enabled": True,
                 "is_default": True
             }
@@ -701,7 +701,7 @@ def load_config():
             {
                 "name": "UnownHash Mirror",
                 "type": "mirror",
-                "url": "https://mirror.unownhash.com",
+                "url": POGO_MIRROR_URL,
                 "enabled": True,
                 "is_default": True
             }
@@ -2421,7 +2421,7 @@ def get_available_google_versions() -> List[Dict]:
     
     if not enabled_sources:
         log("No enabled PoGO sources found, using default", None, "CONFIG")
-        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": "https://mirror.unownhash.com", "enabled": True}]
+        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": POGO_MIRROR_URL, "enabled": True}]
     
     # 1. Fetch from all enabled sources
     for source in enabled_sources:
