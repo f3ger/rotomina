@@ -569,34 +569,36 @@
 
                         <div class="space-y-2 mb-4">
                             {% for source in config.pif_module_sources %}
-                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
-                                <div class="flex items-center gap-3">
-                                    <form action="/settings/toggle-module-source" method="post" class="inline">
+                            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-md">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div class="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                                        <form action="/settings/toggle-module-source" method="post" class="inline shrink-0">
+                                            <input type="hidden" name="repo" value="{{ source.repo }}">
+                                            <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                            <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </button>
+                                        </form>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-sm font-medium text-white truncate">{{ source.name }}</div>
+                                            <div class="text-xs text-gray-400 truncate">{{ source.repo }}</div>
+                                        </div>
+                                        {% if source.is_default %}
+                                        <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded shrink-0">Default</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if not source.is_default %}
+                                    <form action="/settings/delete-module-source" method="post" class="inline shrink-0">
                                         <input type="hidden" name="repo" value="{{ source.repo }}">
-                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
-                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
-                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        <button type="submit" class="text-red-400 hover:text-red-300 text-sm p-1" onclick="return confirm('Delete this source?')">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
                                         </button>
                                     </form>
-                                    <div>
-                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
-                                        <div class="text-xs text-gray-400">{{ source.repo }}</div>
-                                    </div>
-                                    {% if source.is_default %}
-                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
                                     {% endif %}
                                 </div>
-                                {% if not source.is_default %}
-                                <form action="/settings/delete-module-source" method="post" class="inline">
-                                    <input type="hidden" name="repo" value="{{ source.repo }}">
-                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </form>
-                                {% endif %}
                             </div>
                             {% endfor %}
                         </div>
@@ -656,40 +658,42 @@
 
                         <div class="space-y-2 mb-4">
                             {% for source in config.pogo_sources %}
-                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
-                                <div class="flex items-center gap-3">
-                                    <form action="/settings/toggle-pogo-source" method="post" class="inline">
+                            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-md">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div class="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                                        <form action="/settings/toggle-pogo-source" method="post" class="inline shrink-0">
+                                            <input type="hidden" name="source_name" value="{{ source.name }}">
+                                            <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                            <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </button>
+                                        </form>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-sm font-medium text-white truncate">{{ source.name }}</div>
+                                            <div class="text-xs text-gray-400 truncate">
+                                                {% if source.type == 'github' %}
+                                                {{ source.repo }} (GitHub)
+                                                {% elif source.type == 'mirror' %}
+                                                {{ source.url }} (Mirror)
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% if source.is_default %}
+                                        <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded shrink-0">Default</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if not source.is_default %}
+                                    <form action="/settings/delete-pogo-source" method="post" class="inline shrink-0">
                                         <input type="hidden" name="source_name" value="{{ source.name }}">
-                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
-                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
-                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        <button type="submit" class="text-red-400 hover:text-red-300 text-sm p-1" onclick="return confirm('Delete this source?')">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
                                         </button>
                                     </form>
-                                    <div>
-                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
-                                        <div class="text-xs text-gray-400">
-                                            {% if source.type == 'github' %}
-                                            {{ source.repo }} (GitHub)
-                                            {% elif source.type == 'mirror' %}
-                                            {{ source.url }} (Mirror)
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    {% if source.is_default %}
-                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
                                     {% endif %}
                                 </div>
-                                {% if not source.is_default %}
-                                <form action="/settings/delete-pogo-source" method="post" class="inline">
-                                    <input type="hidden" name="source_name" value="{{ source.name }}">
-                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </form>
-                                {% endif %}
                             </div>
                             {% endfor %}
                         </div>
@@ -887,18 +891,18 @@
         <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl lg:max-w-4xl max-h-[92vh] overflow-y-auto"
             @click.away="showRotomConfigModal = false">
             <div class="flex justify-between items-center px-6 py-5 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
-                <h3 class="text-xl font-semibold text-white flex items-center gap-3">
-                    <svg x-show="!rotomConfigLoading" class="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <h3 class="text-lg sm:text-xl font-semibold text-white flex items-center gap-2 sm:gap-3">
+                    <svg x-show="!rotomConfigLoading" class="w-5 h-5 sm:w-6 sm:h-6 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     </svg>
-                    <svg x-show="rotomConfigLoading" class="animate-spin w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24">
+                    <svg x-show="rotomConfigLoading" class="animate-spin w-5 h-5 sm:w-6 sm:h-6 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Rotom Config –
-                    <span class="text-blue-300" x-text="rotomConfigDevice.display_name"></span>
-                    <span x-show="rotomConfigLoading" class="text-sm font-normal text-gray-400">Reading from device...</span>
+                    <span class="truncate">Rotom Config</span>
+                    <span class="hidden sm:inline text-blue-300" x-text="'– ' + rotomConfigDevice.display_name"></span>
+                    <span x-show="rotomConfigLoading" class="text-xs sm:text-sm font-normal text-gray-400">Reading from device...</span>
                 </h3>
                 <button @click="showRotomConfigModal = false" class="text-gray-400 hover:text-gray-200 hover:bg-gray-800 p-2 rounded-lg transition-colors">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
