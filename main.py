@@ -2041,6 +2041,11 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         if not furtif_config:
             furtif_config = read_device_furtif_config(device_id)
 
+        # Check if IsRotomMode is enabled - if not, device should not auto-start
+        if furtif_config and not furtif_config.get("IsRotomMode", False):
+            log("Device is not in Rotom mode, skipping auto-start", device_id, "LOGIN")
+            return False
+
         # Update stored config
         if furtif_config:
             update_device_info(device_id, {
@@ -6408,6 +6413,7 @@ def save_device_rotom_config(
     RotomIgnoreDelays: str = Form("off"),
     RotomUseRealPublicIp: str = Form("off"),
     PackageName: str = Form("com.nianticlabs.pokemongo"),
+    restart_device: str = Form("off"),
 ):
     if redirect := require_login(request):
         return redirect
@@ -6453,8 +6459,24 @@ def save_device_rotom_config(
     log(f"Rotom config saved for device {device_ip}", None, "CONFIG")
 
     success, error_msg = write_device_furtif_config(device_ip, rotom_fields)
+    
+    # Restart device if checkbox is checked
+    if restart_device == "on":
+        log(f"Restarting device {device_ip} after config save", None, "CONFIG")
+        try:
+            # Get control_enabled from device config
+            control_enabled = target_device.get("control_enabled", False)
+            # Run the async restart in a background task
+            asyncio.create_task(optimized_app_start(device_ip, control_enabled))
+            restart_msg = " and device restart triggered"
+        except Exception as e:
+            log(f"Failed to restart device {device_ip}: {e}", None, "ERROR")
+            restart_msg = " (device restart failed)"
+    else:
+        restart_msg = ""
+    
     if success:
-        return RedirectResponse(url="/settings?success=Rotom config saved and pushed to device", status_code=302)
+        return RedirectResponse(url=f"/settings?success=Rotom config saved and pushed to device{restart_msg}", status_code=302)
     else:
         log(f"Failed to push rotom config to device {device_ip}: {error_msg}", None, "ERROR")
         encoded_error = error_msg.replace("&", "%26").replace("=", "%3D")
