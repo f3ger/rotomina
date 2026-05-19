@@ -58,33 +58,33 @@
             <div class="md:hidden space-y-3">
                 {% for device in config.devices %}
                 <div class="bg-gray-800/40 border border-gray-700 rounded-lg p-4">
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium text-gray-100 truncate">{{ device.display_name }}</div>
-                            <div class="text-xs text-gray-400 break-all">{{ device.ip }}</div>
-                            <div class="mt-1 flex items-center gap-2">
-                                {% if device.furtif_config and device.furtif_config.IsRotomMode %}
-                                <span class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">rotom on</span>
-                                {% else %}
-                                <span class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">rotom off</span>
-                                {% endif %}
-                            </div>
-                            <div class="mt-1">
-                                {% if config.device_token %}
-                                {% if token_valid %}
-                                <span
-                                    class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
-                                {% else %}
-                                <span
-                                    class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
-                                {% endif %}
-                                {% else %}
-                                <span class="px-1.5 py-0.5 text-xs rounded-full bg-gray-800 text-gray-400">Not
-                                    Set</span>
-                                {% endif %}
-                            </div>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-medium text-gray-100">{{ loop.index }}</span>
+                            <span class="text-sm font-medium text-gray-100 truncate">{{ device.display_name }}</span>
                         </div>
-                        <div class="shrink-0 flex items-center gap-3">
+                        <div class="text-xs text-gray-400 break-all">{{ device.ip }}</div>
+                        <div class="flex items-center gap-2">
+                            {% if device.furtif_config and device.furtif_config.IsRotomMode %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">rotom on</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">rotom off</span>
+                            {% endif %}
+                            {% if config.device_token %}
+                            {% if token_valid %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mt-3 space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-gray-400">Control</span>
                             <form action="/devices/toggle-control" method="post" class="m-0">
                                 <input type="hidden" name="device_ip" value="{{ device.ip }}">
                                 <label class="inline-flex items-center cursor-pointer">
@@ -95,49 +95,51 @@
                                             class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                                         </div>
                                     </div>
-                                    <span class="ml-2 text-xs text-gray-400">Control</span>
                                 </label>
                             </form>
                         </div>
-                    </div>
 
-                    <div class="mt-3 flex items-center justify-between gap-3">
-                        <div class="text-xs text-gray-400">Memory Threshold (MB)</div>
-                        <div x-data="{ threshold: {{ device.memory_threshold|default(200) }}, pending: false, success: false }"
-                            class="flex items-center">
-                            <input type="number"
-                                class="bg-gray-700 border border-gray-600 text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 w-20 py-1 px-2 text-white"
-                                min="100" max="1000" step="10" x-model="threshold" :disabled="pending">
-                            <button type="button" @click="
-                                        pending = true;
-                                        success = false;
-                                        const formData = new FormData();
-                                        formData.append('device_ip', '{{ device.ip }}');
-                                        formData.append('memory_threshold', threshold);
-                                        fetch('/devices/update-threshold', {
-                                            method: 'POST',
-                                            body: formData
-                                        })
-                                        .then(response => {
-                                            pending = false;
-                                            success = true;
-                                            setTimeout(() => { success = false; }, 3000);
-                                        })
-                                        .catch(error => {
-                                            pending = false;
-                                            console.error('Error:', error);
-                                            alert('Failed to update threshold');
-                                        });
-                                    "
-                                class="ml-2 bg-gray-800 hover:bg-gray-700 text-white px-2 py-1 text-xs rounded-md border border-gray-600"
-                                :class="{ 'bg-green-700 hover:bg-green-600': success }" :disabled="pending">
-                                <span x-show="!pending && !success">Update</span>
-                                <span x-show="success" class="text-white">OK</span>
-                                <span x-show="pending"
-                                    class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
-                            </button>
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-gray-400">Memory Threshold (MB)</span>
+                            <div x-data="{ threshold: {{ device.memory_threshold|default(200) }}, pending: false, success: false }"
+                                class="flex items-center">
+                                <input type="number"
+                                    class="bg-gray-700 border border-gray-600 text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 w-20 py-1 px-2 text-white"
+                                    min="100" max="1000" step="10" x-model="threshold" :disabled="pending">
+                                <button type="button" @click="
+                                            pending = true;
+                                            success = false;
+                                            const formData = new FormData();
+                                            formData.append('device_ip', '{{ device.ip }}');
+                                            formData.append('memory_threshold', threshold);
+                                            fetch('/devices/update-threshold', {
+                                                method: 'POST',
+                                                body: formData
+                                            })
+                                            .then(response => {
+                                                pending = false;
+                                                success = true;
+                                                setTimeout(() => { success = false; }, 3000);
+                                            })
+                                            .catch(error => {
+                                                pending = false;
+                                                console.error('Error:', error);
+                                                alert('Failed to update threshold');
+                                            });
+                                        "
+                                    class="ml-2 bg-gray-800 hover:bg-gray-700 text-white px-2 py-1 text-xs rounded-md border border-gray-600"
+                                    :class="{ 'bg-green-700 hover:bg-green-600': success }" :disabled="pending">
+                                    <span x-show="!pending && !success">Update</span>
+                                    <span x-show="success" class="text-white">OK</span>
+                                    <span x-show="pending"
+                                        class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2">
                             <button type="button" @click="openRotomConfig('{{ device.ip }}')"
-                                class="ml-2 p-1.5 bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-400 border border-gray-600 hover:border-blue-600 rounded-md"
+                                class="p-1.5 bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-400 border border-gray-600 hover:border-blue-600 rounded-md"
                                 title="Edit Rotom Config">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -145,7 +147,7 @@
                                 </svg>
                             </button>
                             <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
-                                class="ml-2 p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
+                                class="p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
                                 title="Remove device">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -300,7 +302,8 @@
                     <div class="flex items-center space-x-4">
                         <input type="password" id="device_token" name="device_token"
                             class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full max-w-xl p-2.5"
-                            value="{{ config.device_token or '' }}" placeholder="Enter device token...">
+                            value="{{ config.device_token or '' }}" placeholder="Enter device token..."
+                            style="-webkit-text-security: disc;">
                         <button type="button" onclick="toggleTokenVisibility()"
                             class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-md text-sm border border-gray-600">
                             <svg id="eye-icon" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
