@@ -41,4 +41,4 @@ services:
 # 2. Save this file as docker-compose.yml
 # 3. Run: docker-compose up -d
 # 4. Access Rotomina at http://localhost:8000
-# 5. Login with admin/admin (change password immediately!)
+# 5. Complete the setup wizard to create your admin account

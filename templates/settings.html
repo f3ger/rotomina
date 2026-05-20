@@ -58,26 +58,33 @@
             <div class="md:hidden space-y-3">
                 {% for device in config.devices %}
                 <div class="bg-gray-800/40 border border-gray-700 rounded-lg p-4">
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium text-gray-100 truncate">{{ device.display_name }}</div>
-                            <div class="text-xs text-gray-400 break-all">{{ device.ip }}</div>
-                            <div class="mt-1">
-                                {% if config.device_token %}
-                                {% if token_valid %}
-                                <span
-                                    class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
-                                {% else %}
-                                <span
-                                    class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
-                                {% endif %}
-                                {% else %}
-                                <span class="px-1.5 py-0.5 text-xs rounded-full bg-gray-800 text-gray-400">Not
-                                    Set</span>
-                                {% endif %}
-                            </div>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-medium text-gray-100">{{ loop.index }}</span>
+                            <span class="text-sm font-medium text-gray-100 truncate">{{ device.display_name }}</span>
                         </div>
-                        <div class="shrink-0 flex items-center gap-3">
+                        <div class="text-xs text-gray-400 break-all">{{ device.ip }}</div>
+                        <div class="flex items-center gap-2">
+                            {% if device.furtif_config and device.furtif_config.IsRotomMode %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">rotom on</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">rotom off</span>
+                            {% endif %}
+                            {% if config.device_token %}
+                            {% if token_valid %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">Valid</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-red-900/50 text-red-400">Invalid</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-xs rounded-full bg-gray-800 text-gray-400">Not Set</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="mt-3 space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-gray-400">Control</span>
                             <form action="/devices/toggle-control" method="post" class="m-0">
                                 <input type="hidden" name="device_ip" value="{{ device.ip }}">
                                 <label class="inline-flex items-center cursor-pointer">
@@ -88,49 +95,51 @@
                                             class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
                                         </div>
                                     </div>
-                                    <span class="ml-2 text-xs text-gray-400">Control</span>
                                 </label>
                             </form>
                         </div>
-                    </div>
 
-                    <div class="mt-3 flex items-center justify-between gap-3">
-                        <div class="text-xs text-gray-400">Memory Threshold (MB)</div>
-                        <div x-data="{ threshold: {{ device.memory_threshold|default(200) }}, pending: false, success: false }"
-                            class="flex items-center">
-                            <input type="number"
-                                class="bg-gray-700 border border-gray-600 text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 w-20 py-1 px-2 text-white"
-                                min="100" max="1000" step="10" x-model="threshold" :disabled="pending">
-                            <button type="button" @click="
-                                        pending = true;
-                                        success = false;
-                                        const formData = new FormData();
-                                        formData.append('device_ip', '{{ device.ip }}');
-                                        formData.append('memory_threshold', threshold);
-                                        fetch('/devices/update-threshold', {
-                                            method: 'POST',
-                                            body: formData
-                                        })
-                                        .then(response => {
-                                            pending = false;
-                                            success = true;
-                                            setTimeout(() => { success = false; }, 3000);
-                                        })
-                                        .catch(error => {
-                                            pending = false;
-                                            console.error('Error:', error);
-                                            alert('Failed to update threshold');
-                                        });
-                                    "
-                                class="ml-2 bg-gray-800 hover:bg-gray-700 text-white px-2 py-1 text-xs rounded-md border border-gray-600"
-                                :class="{ 'bg-green-700 hover:bg-green-600': success }" :disabled="pending">
-                                <span x-show="!pending && !success">Update</span>
-                                <span x-show="success" class="text-white">OK</span>
-                                <span x-show="pending"
-                                    class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
-                            </button>
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs text-gray-400">Memory Threshold (MB)</span>
+                            <div x-data="{ threshold: {{ device.memory_threshold|default(200) }}, pending: false, success: false }"
+                                class="flex items-center">
+                                <input type="number"
+                                    class="bg-gray-700 border border-gray-600 text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 w-20 py-1 px-2 text-white"
+                                    min="100" max="1000" step="10" x-model="threshold" :disabled="pending">
+                                <button type="button" @click="
+                                            pending = true;
+                                            success = false;
+                                            const formData = new FormData();
+                                            formData.append('device_ip', '{{ device.ip }}');
+                                            formData.append('memory_threshold', threshold);
+                                            fetch('/devices/update-threshold', {
+                                                method: 'POST',
+                                                body: formData
+                                            })
+                                            .then(response => {
+                                                pending = false;
+                                                success = true;
+                                                setTimeout(() => { success = false; }, 3000);
+                                            })
+                                            .catch(error => {
+                                                pending = false;
+                                                console.error('Error:', error);
+                                                alert('Failed to update threshold');
+                                            });
+                                        "
+                                    class="ml-2 bg-gray-800 hover:bg-gray-700 text-white px-2 py-1 text-xs rounded-md border border-gray-600"
+                                    :class="{ 'bg-green-700 hover:bg-green-600': success }" :disabled="pending">
+                                    <span x-show="!pending && !success">Update</span>
+                                    <span x-show="success" class="text-white">OK</span>
+                                    <span x-show="pending"
+                                        class="inline-block w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2">
                             <button type="button" @click="openRotomConfig('{{ device.ip }}')"
-                                class="ml-2 p-1.5 bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-400 border border-gray-600 hover:border-blue-600 rounded-md"
+                                class="p-1.5 bg-gray-800 hover:bg-blue-900/40 text-gray-400 hover:text-blue-400 border border-gray-600 hover:border-blue-600 rounded-md"
                                 title="Edit Rotom Config">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -138,7 +147,7 @@
                                 </svg>
                             </button>
                             <button type="button" onclick="if(confirm('Remove device {{ device.display_name }} ({{ device.ip }})?')){const fd=new FormData();fd.append('devices','{{ device.ip }}');fetch('/devices/remove',{method:'POST',body:fd}).then(()=>{window.location.href='/settings?success=Device removed successfully'}).catch(()=>alert('Failed to remove device'))}"
-                                class="ml-2 p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
+                                class="p-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-700 rounded-md"
                                 title="Remove device">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -160,6 +169,8 @@
                                 Device Name</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                                 Control Active</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                                Rotom Mode</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                                 Token Status</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
@@ -188,6 +199,13 @@
                                         </div>
                                     </label>
                                 </form>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                                {% if device.furtif_config and device.furtif_config.IsRotomMode %}
+                                <span class="px-2 py-1 text-xs rounded-full bg-green-900/50 text-green-400">rotom on</span>
+                                {% else %}
+                                <span class="px-2 py-1 text-xs rounded-full bg-red-900/50 text-red-400">rotom off</span>
+                                {% endif %}
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                                 {% if config.device_token %}
@@ -284,7 +302,8 @@
                     <div class="flex items-center space-x-4">
                         <input type="password" id="device_token" name="device_token"
                             class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full max-w-xl p-2.5"
-                            value="{{ config.device_token or '' }}" placeholder="Enter device token...">
+                            value="{{ config.device_token or '' }}" placeholder="Enter device token..."
+                            style="-webkit-text-security: disc;">
                         <button type="button" onclick="toggleTokenVisibility()"
                             class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded-md text-sm border border-gray-600">
                             <svg id="eye-icon" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -327,7 +346,7 @@
             <h2 class="text-xl font-medium text-white">API Settings</h2>
         </div>
         <div class="p-6">
-            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
+            <form action="/settings/save-api" method="post" class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                         <label for="rotomApiUrl" class="block text-sm font-medium text-gray-300 mb-1">Rotom API
@@ -351,6 +370,16 @@
                             value="{{ config.rotomApiPass }}" placeholder="Enter Rotom API Password...">
                     </div>
                 </div>
+                <div>
+                    <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center">
+                        <svg class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                        </svg>
+                        Save API Settings
+                    </button>
+                </div>
 
             </form>
         </div>
@@ -369,7 +398,7 @@
             </button>
         </div>
         <div class="p-6 space-y-4">
-            <form action="/settings/save" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
+            <form action="/settings/save-discord" method="post" class="space-y-4" @submit.prevent="saveSettingsAndRestartBot($event.target)">
                 <!-- Discord Webhook - Always Visible -->
                 <div>
                     <label for="discord_webhook_url" class="block text-sm font-medium text-gray-300 mb-1">
@@ -540,34 +569,36 @@
 
                         <div class="space-y-2 mb-4">
                             {% for source in config.pif_module_sources %}
-                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
-                                <div class="flex items-center gap-3">
-                                    <form action="/settings/toggle-module-source" method="post" class="inline">
+                            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-md">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div class="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                                        <form action="/settings/toggle-module-source" method="post" class="inline shrink-0">
+                                            <input type="hidden" name="repo" value="{{ source.repo }}">
+                                            <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                            <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </button>
+                                        </form>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-sm font-medium text-white truncate">{{ source.name }}</div>
+                                            <div class="text-xs text-gray-400 truncate">{{ source.repo }}</div>
+                                        </div>
+                                        {% if source.is_default %}
+                                        <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded shrink-0">Default</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if not source.is_default %}
+                                    <form action="/settings/delete-module-source" method="post" class="inline shrink-0">
                                         <input type="hidden" name="repo" value="{{ source.repo }}">
-                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
-                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
-                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        <button type="submit" class="text-red-400 hover:text-red-300 text-sm p-1" onclick="return confirm('Delete this source?')">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
                                         </button>
                                     </form>
-                                    <div>
-                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
-                                        <div class="text-xs text-gray-400">{{ source.repo }}</div>
-                                    </div>
-                                    {% if source.is_default %}
-                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
                                     {% endif %}
                                 </div>
-                                {% if not source.is_default %}
-                                <form action="/settings/delete-module-source" method="post" class="inline">
-                                    <input type="hidden" name="repo" value="{{ source.repo }}">
-                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </form>
-                                {% endif %}
                             </div>
                             {% endfor %}
                         </div>
@@ -627,40 +658,42 @@
 
                         <div class="space-y-2 mb-4">
                             {% for source in config.pogo_sources %}
-                            <div class="flex items-center justify-between bg-gray-800/50 p-3 rounded-md">
-                                <div class="flex items-center gap-3">
-                                    <form action="/settings/toggle-pogo-source" method="post" class="inline">
+                            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-md">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div class="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                                        <form action="/settings/toggle-pogo-source" method="post" class="inline shrink-0">
+                                            <input type="hidden" name="source_name" value="{{ source.name }}">
+                                            <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
+                                            <button type="submit" class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
+                                                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </button>
+                                        </form>
+                                        <div class="min-w-0 flex-1">
+                                            <div class="text-sm font-medium text-white truncate">{{ source.name }}</div>
+                                            <div class="text-xs text-gray-400 truncate">
+                                                {% if source.type == 'github' %}
+                                                {{ source.repo }} (GitHub)
+                                                {% elif source.type == 'mirror' %}
+                                                {{ source.url }} (Mirror)
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% if source.is_default %}
+                                        <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded shrink-0">Default</span>
+                                        {% endif %}
+                                    </div>
+                                    {% if not source.is_default %}
+                                    <form action="/settings/delete-pogo-source" method="post" class="inline shrink-0">
                                         <input type="hidden" name="source_name" value="{{ source.name }}">
-                                        <input type="hidden" name="enabled" value="{{ 'false' if source.enabled else 'true' }}">
-                                        <button type="submit" class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" {% if source.enabled %}checked{% endif %} disabled class="sr-only peer">
-                                            <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                        <button type="submit" class="text-red-400 hover:text-red-300 text-sm p-1" onclick="return confirm('Delete this source?')">
+                                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
                                         </button>
                                     </form>
-                                    <div>
-                                        <div class="text-sm font-medium text-white">{{ source.name }}</div>
-                                        <div class="text-xs text-gray-400">
-                                            {% if source.type == 'github' %}
-                                            {{ source.repo }} (GitHub)
-                                            {% elif source.type == 'mirror' %}
-                                            {{ source.url }} (Mirror)
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    {% if source.is_default %}
-                                    <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded">Default</span>
                                     {% endif %}
                                 </div>
-                                {% if not source.is_default %}
-                                <form action="/settings/delete-pogo-source" method="post" class="inline">
-                                    <input type="hidden" name="source_name" value="{{ source.name }}">
-                                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm" onclick="return confirm('Delete this source?')">
-                                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                    </button>
-                                </form>
-                                {% endif %}
                             </div>
                             {% endfor %}
                         </div>
@@ -855,151 +888,160 @@
 
     <!-- Rotom Config Modal -->
     <div x-show="showRotomConfigModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" x-cloak>
-        <div class="bg-gray-900 border border-gray-700 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto"
+        <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl lg:max-w-4xl max-h-[92vh] overflow-y-auto"
             @click.away="showRotomConfigModal = false">
-            <div class="flex justify-between items-center px-6 py-4 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
-                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
-                    <svg x-show="!rotomConfigLoading" class="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div class="flex justify-between items-center px-6 py-5 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
+                <h3 class="text-lg sm:text-xl font-semibold text-white flex items-center gap-2 sm:gap-3">
+                    <svg x-show="!rotomConfigLoading" class="w-5 h-5 sm:w-6 sm:h-6 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     </svg>
-                    <svg x-show="rotomConfigLoading" class="animate-spin w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24">
+                    <svg x-show="rotomConfigLoading" class="animate-spin w-5 h-5 sm:w-6 sm:h-6 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Rotom Config –
-                    <span class="text-blue-300" x-text="rotomConfigDevice.display_name"></span>
-                    <span x-show="rotomConfigLoading" class="text-sm font-normal text-gray-400">Reading from device...</span>
+                    <span class="truncate">Rotom Config</span>
+                    <span class="hidden sm:inline text-blue-300" x-text="'– ' + rotomConfigDevice.display_name"></span>
+                    <span x-show="rotomConfigLoading" class="text-xs sm:text-sm font-normal text-gray-400">Reading from device...</span>
                 </h3>
-                <button @click="showRotomConfigModal = false" class="text-gray-400 hover:text-gray-200">
+                <button @click="showRotomConfigModal = false" class="text-gray-400 hover:text-gray-200 hover:bg-gray-800 p-2 rounded-lg transition-colors">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
                 </button>
             </div>
 
-            <form action="/devices/save-rotom-config" method="post" class="p-6 space-y-5">
+            <form action="/devices/save-rotom-config" method="post" class="p-6 lg:p-8 space-y-6">
                 <input type="hidden" name="device_ip" :value="rotomConfigDevice.ip">
 
-                <!-- Toggle fields -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <!-- Set to Rotom mode -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Set to Rotom mode</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="IsRotomMode" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.IsRotomMode">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- GMO Boost -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">GMO Boost</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomRpcJailMode" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomRpcJailMode">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- Try Auto Start -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Try Auto Start</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomTryAutoStart" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomTryAutoStart">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- Check for forced pgo versions -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Check for forced pgo versions</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomCheckPgoForced" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomCheckPgoForced">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- Enable Commands -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Enable Commands</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomUsesCmds" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomUsesCmds">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- Try to ignore Unity -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Try to ignore Unity</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomIgnoreUnity" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomIgnoreUnity">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- Ignore Delays -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">Ignore Delays</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomIgnoreDelays" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomIgnoreDelays">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
-                    <!-- uses real public ip -->
-                    <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 transition-colors">
-                        <span class="text-sm font-medium text-gray-300">uses real public ip</span>
-                        <div class="relative ml-3 shrink-0">
-                            <input type="checkbox" name="RotomUseRealPublicIp" class="sr-only peer"
-                                x-model="rotomConfigDevice.furtif_config.RotomUseRealPublicIp">
-                            <div class="relative w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </div>
-                    </label>
+                <!-- Toggle Section -->
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Mode Settings</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Set to Rotom mode -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Set to Rotom mode</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="IsRotomMode" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.IsRotomMode">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- GMO Boost -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">GMO Boost</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomRpcJailMode" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomRpcJailMode">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- Try Auto Start -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Try Auto Start</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomTryAutoStart" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomTryAutoStart">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- Check for forced pgo versions -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Check for forced pgo versions</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomCheckPgoForced" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomCheckPgoForced">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- Enable Commands -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Enable Commands</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomUsesCmds" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomUsesCmds">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- Try to ignore Unity -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Try to ignore Unity</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomIgnoreUnity" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomIgnoreUnity">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- Ignore Delays -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">Ignore Delays</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomIgnoreDelays" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomIgnoreDelays">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                        <!-- uses real public ip -->
+                        <label class="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg px-4 py-3 cursor-pointer hover:border-gray-500 hover:bg-gray-800/80 transition-all">
+                            <span class="text-sm font-medium text-gray-300">uses real public ip</span>
+                            <div class="relative ml-3 shrink-0">
+                                <input type="checkbox" name="RotomUseRealPublicIp" class="sr-only peer"
+                                    x-model="rotomConfigDevice.furtif_config.RotomUseRealPublicIp">
+                                <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-400 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
-                <!-- Text / number fields -->
-                <div class="space-y-4">
-                    <!-- Secret rotom header (password) -->
-                    <div x-data="{ showSecret: false }">
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Secret rotom header</label>
-                        <div class="relative">
-                            <input :type="showSecret ? 'text' : 'password'" name="RotomSecret"
-                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 pr-10"
-                                x-model="rotomConfigDevice.furtif_config.RotomSecret"
-                                placeholder="Leave empty if not required">
-                            <button type="button" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-200"
-                                @click="showSecret = !showSecret">
-                                <svg x-show="!showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                </svg>
-                                <svg x-show="showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
-                                </svg>
-                            </button>
+                <!-- Connection Settings Section -->
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Connection Settings</h4>
+                    <div class="space-y-4">
+                        <!-- Secret rotom header (password) -->
+                        <div x-data="{ showSecret: false }">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Secret rotom header</label>
+                            <div class="relative">
+                                <input :type="showSecret ? 'text' : 'password'" name="RotomSecret"
+                                    class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 pr-12 transition-colors"
+                                    x-model="rotomConfigDevice.furtif_config.RotomSecret"
+                                    placeholder="Leave empty if not required">
+                                <button type="button" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-200 hover:bg-gray-600 rounded-r-lg transition-colors"
+                                    @click="showSecret = !showSecret">
+                                    <svg x-show="!showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                    </svg>
+                                    <svg x-show="showSecret" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- EndPoint Rotom -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">EndPoint Rotom</label>
+                            <input type="text" name="RotomURL"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
+                                x-model="rotomConfigDevice.furtif_config.RotomURL"
+                                placeholder="ws://192.168.1.10:7070/">
+                        </div>
+
+                        <!-- Rotom Device Name -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Rotom Device Name</label>
+                            <input type="text" name="RotomDeviceName"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
+                                x-model="rotomConfigDevice.furtif_config.RotomDeviceName"
+                                placeholder="e.g. Pixel5">
                         </div>
                     </div>
+                </div>
 
-                    <!-- EndPoint Rotom -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">EndPoint Rotom</label>
-                        <input type="text" name="RotomURL"
-                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                            x-model="rotomConfigDevice.furtif_config.RotomURL"
-                            placeholder="ws://192.168.1.10:7070/">
-                    </div>
-
-                    <!-- Rotom Device Name -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Rotom Device Name</label>
-                        <input type="text" name="RotomDeviceName"
-                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                            x-model="rotomConfigDevice.furtif_config.RotomDeviceName"
-                            placeholder="e.g. Pixel5">
-                    </div>
-
-                    <!-- Numeric fields -->
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Performance Settings Section -->
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Performance Settings</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <!-- Rotom Delay Loader -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">
@@ -1007,7 +1049,7 @@
                                 <span class="text-gray-500 font-normal">(3–30)</span>
                             </label>
                             <input type="number" name="RotomDelayLoader" min="3" max="30"
-                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
                                 x-model.number="rotomConfigDevice.furtif_config.RotomDelayLoader">
                         </div>
                         <!-- Max Worker Limit -->
@@ -1017,31 +1059,36 @@
                                 <span class="text-gray-500 font-normal">(1–250)</span>
                             </label>
                             <input type="number" name="RotomMaxWorkers" min="1" max="250"
-                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
                                 x-model.number="rotomConfigDevice.furtif_config.RotomMaxWorkers">
                         </div>
-                    </div>
-
-                    <!-- Package Name -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Package Name</label>
-                        <select name="PackageName"
-                            class="bg-gray-700 border border-gray-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                            x-model="rotomConfigDevice.furtif_config.PackageName">
-                            <option value="com.nianticlabs.pokemongo">com.nianticlabs.pokemongo</option>
-                            <option value="com.nianticlabs.pokemongo.ares">com.nianticlabs.pokemongo.ares</option>
-                        </select>
+                        <!-- Package Name -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Package Name</label>
+                            <select name="PackageName"
+                                class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
+                                x-model="rotomConfigDevice.furtif_config.PackageName">
+                                <option value="com.nianticlabs.pokemongo">com.nianticlabs.pokemongo</option>
+                                <option value="com.nianticlabs.pokemongo.ares">com.nianticlabs.pokemongo.ares</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
+                <!-- Restart Option -->
+                <div class="flex items-center gap-3 pt-2">
+                    <input type="checkbox" name="restart_device" id="restart_device" class="w-5 h-5 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900">
+                    <label for="restart_device" class="text-sm text-gray-300 cursor-pointer">Restart device after saving config</label>
+                </div>
+
                 <!-- Buttons -->
-                <div class="flex justify-end gap-3 pt-2 border-t border-gray-700">
+                <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
                     <button type="button" @click="showRotomConfigModal = false"
-                        class="border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm font-medium">
+                        class="border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white px-6 py-2.5 rounded-lg text-sm font-medium transition-colors">
                         Cancel
                     </button>
                     <button type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2">
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
                         <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
                         </svg>
@@ -1584,7 +1631,7 @@
                 const formData = new FormData(form);
                 const token = formData.get('discord_bot_token') || '';
                 try {
-                    await fetch('/settings/save', { method: 'POST', body: formData });
+                    await fetch('/settings/save-discord', { method: 'POST', body: formData });
                 } catch (e) {
                     // Ignore fetch errors from redirect
                 }
@@ -1747,9 +1794,8 @@
                 formData.append('rotomApiUrl', this.apiSettings.rotomApiUrl);
                 formData.append('rotomApiUser', this.apiSettings.rotomApiUser);
                 formData.append('rotomApiPass', this.apiSettings.rotomApiPass);
-                formData.append('discord_webhook_url', this.apiSettings.discordWebhookUrl);
 
-                fetch('/settings/save', {
+                fetch('/settings/save-api', {
                     method: 'POST',
                     body: formData
                 })

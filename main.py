@@ -13,7 +13,7 @@ import traceback
 import tempfile
 import os
 import platform
-import hashlib
+import requests
 import base64
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -22,11 +22,17 @@ from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from uuid import uuid4
 
+# Discord Message Color Constants
+DISCORD_BOT_AVAILABLE = True
 DISCORD_IMPORT_ERROR: str = ""
+DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
+DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
+DISCORD_COLOR_BLUE = 0x3498DB    # Info/Update
+DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
+
 try:
     import discord
     from discord import app_commands
-    DISCORD_BOT_AVAILABLE = True
 except ImportError as _discord_err:
     DISCORD_BOT_AVAILABLE = False
     DISCORD_IMPORT_ERROR = str(_discord_err)
@@ -635,7 +641,7 @@ def load_config():
             {
                 "name": "UnownHash Mirror",
                 "type": "mirror",
-                "url": "https://mirror.unownhash.com",
+                "url": POGO_MIRROR_URL,
                 "enabled": True,
                 "is_default": True
             }
@@ -701,7 +707,7 @@ def load_config():
             {
                 "name": "UnownHash Mirror",
                 "type": "mirror",
-                "url": "https://mirror.unownhash.com",
+                "url": POGO_MIRROR_URL,
                 "enabled": True,
                 "is_default": True
             }
@@ -758,7 +764,7 @@ def ttl_cache(ttl: int):
     return decorator
 
 # Discord Webhook Notification Function
-async def send_discord_webhook(message: str, title: str = None, color: int = 0x5865F2):
+async def send_discord_webhook(message: str, title: str = None, color: int = DISCORD_COLOR_BLUE):
     """Sends a notification via Discord webhook URL."""
     cfg = load_config()
     webhook_url = cfg.get("discord_webhook_url", "").strip()
@@ -786,7 +792,7 @@ async def send_discord_webhook(message: str, title: str = None, color: int = 0x5
 
 
 # Discord Notification Function (via Bot or Webhook)
-async def send_discord_notification(message: str, title: str = None, color: int = 0x5865F2):
+async def send_discord_notification(message: str, title: str = None, color: int = DISCORD_COLOR_BLUE):
     """Sends a notification via Discord webhook (if configured) or bot."""
     cfg = load_config()
     # Try webhook first if configured
@@ -818,11 +824,6 @@ async def send_discord_notification(message: str, title: str = None, color: int 
         log(f"Discord notification error: {e}", None, "ERROR")
         return False
 
-# Discord Message Color Constants
-DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
-DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
-DISCORD_COLOR_BLUE = 0x3498DB    # Info/Update
-DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
 
 # ─────────────────────────── Discord Bot ───────────────────────────
 
@@ -951,6 +952,10 @@ async def start_discord_bot():
     except Exception as e:
         log(f"Discord Bot error: {e}", None, "DISCORD")
     finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
         # Clear global reference when bot disconnects
         if _discord_bot_client is client:
             _discord_bot_client = None
@@ -1050,27 +1055,27 @@ async def update_discord_status_embed():
 async def notify_device_offline(device_name: str, ip: str):
     add_discord_event(f"{device_name} went offline")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} ({ip}) went offline", "Device Offline", 0xE74C3C)
+    await send_discord_webhook(f"Device {device_name} ({ip}) went offline", "Device Offline", DISCORD_COLOR_RED)
 
 async def notify_device_online(device_name: str, ip: str):
     add_discord_event(f"{device_name} is back online")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} ({ip}) is back online", "Device Online", 0x2ECC71)
+    await send_discord_webhook(f"Device {device_name} ({ip}) is back online", "Device Online", DISCORD_COLOR_GREEN)
 
 async def notify_memory_restart(device_name: str, ip: str, memory: int, threshold: int):
     add_discord_event(f"{device_name} restarted — low memory")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} restarted due to low memory ({memory}MB < {threshold}MB)", "Memory Restart", 0xE67E22)
+    await send_discord_webhook(f"Device {device_name} restarted due to low memory ({memory}MB < {threshold}MB)", "Memory Restart", DISCORD_COLOR_ORANGE)
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     add_discord_event(f"{update_type} {version} installed on {device_name}")
     await update_discord_status_embed()
-    await send_discord_webhook(f"{update_type} {version} installed on {device_name}", "Update Installed", 0x2ECC71)
+    await send_discord_webhook(f"{update_type} {version} installed on {device_name}", "Update Installed", DISCORD_COLOR_GREEN)
 
 async def notify_update_downloaded(update_type: str, version: str):
     add_discord_event(f"{update_type} {version} downloaded")
     await update_discord_status_embed()
-    await send_discord_webhook(f"{update_type} {version} downloaded and ready for installation", "Update Downloaded", 0x3498DB)
+    await send_discord_webhook(f"{update_type} {version} downloaded and ready for installation", "Update Downloaded", DISCORD_COLOR_BLUE)
 
 
 # Token Validation Functions
@@ -1173,7 +1178,7 @@ async def notify_invalid_token(device_name: str, device_ip: str, error_message: 
     """Sends Discord notification when device token is invalid"""
     add_discord_event(f"Token invalid for {device_name}")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Invalid token for {device_name} ({device_ip}): {error_message}", "Invalid Token", 0xE74C3C)
+    await send_discord_webhook(f"Invalid token for {device_name} ({device_ip}): {error_message}", "Invalid Token", DISCORD_COLOR_RED)
 
 # Device update tracking functions
 def mark_device_in_update(device_id: str, update_type: str) -> None:
@@ -2037,6 +2042,11 @@ async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
         if not furtif_config:
             furtif_config = read_device_furtif_config(device_id)
 
+        # Check if IsRotomMode is enabled - if not, device should not auto-start
+        if furtif_config and not furtif_config.get("IsRotomMode", False):
+            log("Device is not in Rotom mode, skipping auto-start", device_id, "LOGIN")
+            return False
+
         # Update stored config
         if furtif_config:
             update_device_info(device_id, {
@@ -2330,19 +2340,6 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
             for release in releases:
                 if not isinstance(release, dict):
                     continue
-                    
-                tag_name = release.get("tag_name", "").strip()
-                if not tag_name:
-                    continue
-                
-                # Extract version from tag (e.g., "0.409.0" from "v0.409.0" or just "0.409.0")
-                version_match = re.search(r'(\d+\.\d+\.\d+)', tag_name)
-                if not version_match:
-                    continue
-                    
-                version = version_match.group(1)
-                if version in seen_versions:
-                    continue
                 
                 # Find .apkm asset
                 assets = release.get("assets", [])
@@ -2352,18 +2349,32 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
                      asset.get("name", "").endswith(".apkm")),
                     None
                 )
-                
-                if apkm_asset:
-                    processed.append({
-                        "version": version,
-                        "filename": apkm_asset.get("name"),
-                        "url": apkm_asset.get("browser_download_url"),
-                        "date": release.get("published_at", ""),
-                        "arch": DEFAULT_ARCH,
-                        "source": source_name,
-                        "source_repo": repo
-                    })
-                    seen_versions.add(version)
+                if not apkm_asset:
+                    continue
+
+                name = apkm_asset.get("name", "").strip()
+                if not name:
+                    continue
+
+                parsed = parse_pogo_apkm_filename(name)
+                if not parsed:
+                    continue
+
+                version, arch = parsed
+                if version in seen_versions:
+                    continue
+
+                filename = f"com.nianticlabs.pokemongo_{arch}_{version}.apkm"
+                processed.append({
+                    "version": version,
+                    "filename": filename,
+                    "url": apkm_asset.get("browser_download_url"),
+                    "date": release.get("published_at", ""),
+                    "arch": arch,
+                    "source": source_name,
+                    "source_repo": repo
+                })
+                seen_versions.add(version)
                     
         elif response.status_code == 403:
             log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
@@ -2377,6 +2388,33 @@ def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
     
     return processed
 
+
+def parse_pogo_apkm_filename(filename: str) -> Optional[Tuple[str, str]]:
+    """Parse PoGO APKM filenames and return (version, arch)."""
+    name = Path(filename).name
+
+    match = re.match(r'^com\.nianticlabs\.pokemongo_([^_]+)_(\d+\.\d+\.\d+)\.apkm$', name)
+    if match:
+        return match.group(2), match.group(1)
+
+    match = re.match(
+        r'^com\.nianticlabs\.pokemongo_(\d+\.\d+\.\d+(?:-[^_]+)?)_([^_]+)\.apkm$',
+        name
+    )
+    if match:
+        version_match = re.search(r'(\d+\.\d+\.\d+)', match.group(1))
+        arch = match.group(2)
+        if version_match:
+            return version_match.group(1), arch
+
+    version_match = re.search(r'(\d+\.\d+\.\d+)', name)
+    arch_match = re.search(r'(arm64-v8a|armeabi-v7a|x86_64|x86)', name)
+    if version_match:
+        return version_match.group(1), arch_match.group(1) if arch_match else DEFAULT_ARCH
+
+    return None
+
+
 def get_available_google_versions() -> List[Dict]:
     """Get Google/APKM versions from configured sources and local files"""
     processed = []
@@ -2389,7 +2427,7 @@ def get_available_google_versions() -> List[Dict]:
     
     if not enabled_sources:
         log("No enabled PoGO sources found, using default", None, "CONFIG")
-        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": "https://mirror.unownhash.com", "enabled": True}]
+        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": POGO_MIRROR_URL, "enabled": True}]
     
     # 1. Fetch from all enabled sources
     for source in enabled_sources:
@@ -2421,21 +2459,23 @@ def get_available_google_versions() -> List[Dict]:
     try:
         if APK_DIR.exists():
             for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
-                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apkm', apkm_file.name)
-                if match:
-                    local_version = match.group(1)
-                    if local_version not in seen_versions:
-                        processed.append({
-                            "version": local_version,
-                            "filename": apkm_file.name,
-                            "url": "",
-                            "date": "",
-                            "arch": DEFAULT_ARCH,
-                            "source": "local",
-                            "apk_type": "google",
-                            "type_label": "G"
-                        })
-                        seen_versions.add(local_version)
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
     except Exception as e:
         log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
     
@@ -2470,6 +2510,90 @@ def get_available_samsung_versions() -> List[Dict]:
         log(f"Error scanning local Samsung APK files: {str(e)}", None, "ERROR")
     
     return processed
+
+
+def get_available_local_google_versions() -> List[Dict]:
+    """Get Google/APKM versions from local APK_DIR only"""
+    processed = []
+    seen_versions = set()
+
+    try:
+        if APK_DIR.exists():
+            for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
+
+    return processed
+
+
+def get_available_mitm_versions() -> List[Dict]:
+    """Get available MITM (MapWorld) versions from local APK directory"""
+    processed = []
+    seen_versions = set()
+    mitm_dir = BASE_DIR / "data" / "apks"
+
+    try:
+        if mitm_dir.exists():
+            for mitm_file in mitm_dir.glob("mapworld_*.apk"):
+                match = re.search(r'mapworld_v(\d+\.\d+)_\d+\.apk', mitm_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": mitm_file.name,
+                            "path": str(mitm_file)
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local MITM files: {str(e)}", None, "ERROR")
+
+    # Sort by version (descending)
+    sorted_versions = sorted(
+        processed,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return sorted_versions
+
+
+def get_available_local_versions(apk_type: str = "all") -> Dict:
+    """Get available PoGO versions from local APK directories only"""
+    all_versions = []
+
+    if apk_type in ("all", "google"):
+        all_versions.extend(get_available_local_google_versions())
+    if apk_type in ("all", "samsung"):
+        all_versions.extend(get_available_samsung_versions())
+
+    distinct_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return {
+        "latest": distinct_versions[0] if distinct_versions else {},
+        "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
+    }
 
 # APK Management with multiple sources
 @ttl_cache(ttl=3600)
@@ -5736,14 +5860,15 @@ async def get_status_data(apk_type: str = "google"):
     config = load_config()
     devices = []
     
-    versions = get_available_versions(apk_type)
+    # Always get local versions only for dropdown display
+    versions = get_available_local_versions("all")
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
 
     current_time = time.time()
     last_version_debug = getattr(get_status_data, 'last_version_debug', 0)
     if not hasattr(get_status_data, 'last_versions') or get_status_data.last_versions != (pogo_latest, pogo_previous) or current_time - last_version_debug > 300:
-        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous}", None, "INFO")
+        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous} (local only)", None, "INFO")
         get_status_data.last_versions = (pogo_latest, pogo_previous)
         get_status_data.last_version_debug = current_time
     
@@ -6075,8 +6200,9 @@ async def status_page(request: Request, apk_type: str = "google"):
             log(f"Error validating token in status: {e}", None, "ERROR")
             token_valid = False
     
-    # Get PoGo version info for buttons (filtered by apk_type)
-    versions = get_available_versions(apk_type)
+    # Get local PoGo versions from local APK directories only
+    log(f"Status page requested with apk_type={apk_type}", None, "DEBUG")
+    versions = get_available_local_versions("all")
     pogo_latest = versions.get("latest", {}).get("version", "N/A")
     pogo_previous = versions.get("previous", {}).get("version", "N/A")
     
@@ -6155,12 +6281,31 @@ async def settings_page(request: Request):
         "token_valid": token_valid
     })
 
-@app.post("/settings/save", response_class=HTMLResponse)
-def settings_save(
+@app.post("/settings/save-api", response_class=HTMLResponse)
+def settings_save_api(
     request: Request,
     rotomApiUrl: str = Form(""),
     rotomApiUser: str = Form(""),
     rotomApiPass: str = Form(""),
+):
+    if redirect := require_login(request):
+        return redirect
+
+    config = load_config()
+    config.update({
+        "rotomApiUrl": rotomApiUrl,
+        "rotomApiUser": rotomApiUser,
+        "rotomApiPass": rotomApiPass,
+    })
+
+    save_config(config)
+    log(f"API settings saved successfully", None, "CONFIG")
+
+    return RedirectResponse(url="/settings?success=API settings saved", status_code=302)
+
+@app.post("/settings/save-discord", response_class=HTMLResponse)
+def settings_save_discord(
+    request: Request,
     discord_webhook_url: str = Form(""),
     discord_bot_token: str = Form(""),
     discord_bot_channel_id: str = Form(""),
@@ -6172,9 +6317,6 @@ def settings_save(
 
     config = load_config()
     config.update({
-        "rotomApiUrl": rotomApiUrl,
-        "rotomApiUser": rotomApiUser,
-        "rotomApiPass": rotomApiPass,
         "discord_webhook_url": discord_webhook_url,
         "discord_bot_token": discord_bot_token,
         "discord_bot_channel_id": discord_bot_channel_id,
@@ -6183,9 +6325,9 @@ def settings_save(
     })
 
     save_config(config)
-    log(f"Settings saved successfully", None, "CONFIG")
+    log(f"Discord settings saved successfully", None, "CONFIG")
 
-    return RedirectResponse(url="/settings", status_code=302)
+    return RedirectResponse(url="/settings?success=Discord settings saved", status_code=302)
 
 @app.post("/settings/save-device-token", response_class=HTMLResponse)
 async def save_device_token(request: Request, device_token: str = Form("")):
@@ -6272,6 +6414,7 @@ def save_device_rotom_config(
     RotomIgnoreDelays: str = Form("off"),
     RotomUseRealPublicIp: str = Form("off"),
     PackageName: str = Form("com.nianticlabs.pokemongo"),
+    restart_device: str = Form("off"),
 ):
     if redirect := require_login(request):
         return redirect
@@ -6317,8 +6460,39 @@ def save_device_rotom_config(
     log(f"Rotom config saved for device {device_ip}", None, "CONFIG")
 
     success, error_msg = write_device_furtif_config(device_ip, rotom_fields)
+    
+    # Restart device if checkbox is checked
+    if restart_device == "on":
+        if IsRotomMode == "on":
+            log(f"Restarting apps after config save (Rotom mode)", None, "CONFIG")
+            try:
+                device_id = format_device_id(device_ip)
+                control_enabled = target_device.get("control_enabled", False)
+                async def restart_apps_task():
+                    await optimized_app_start(device_id, control_enabled)
+                import threading
+                threading.Thread(target=lambda: asyncio.run(restart_apps_task())).start()
+                restart_msg = " and apps restart triggered"
+            except Exception as e:
+                log(f"Failed to restart apps {device_ip}: {e}", None, "ERROR")
+                restart_msg = " (apps restart failed)"
+        else:
+            log(f"Killing all apps after config save (not Rotom mode)", None, "CONFIG")
+            try:
+                device_id = format_device_id(device_ip)
+                # Kill both POGO and MapWorld using adb commands directly
+                pogo_package = get_device_package_name(device_id)
+                kill_cmd = f"am force-stop {pogo_package}; am force-stop com.github.furtif.furtifformaps"
+                adb_pool.execute_command(device_id, ["adb", "shell", kill_cmd])
+                restart_msg = " and all apps killed"
+            except Exception as e:
+                log(f"Failed to kill apps {device_ip}: {e}", None, "ERROR")
+                restart_msg = " (apps kill failed)"
+    else:
+        restart_msg = ""
+    
     if success:
-        return RedirectResponse(url="/settings?success=Rotom config saved and pushed to device", status_code=302)
+        return RedirectResponse(url=f"/settings?success=Rotom config saved and pushed to device{restart_msg}", status_code=302)
     else:
         log(f"Failed to push rotom config to device {device_ip}: {error_msg}", None, "ERROR")
         encoded_error = error_msg.replace("&", "%26").replace("=", "%3D")
@@ -6502,6 +6676,39 @@ async def pif_device_update(request: Request, device_ip: str = Form(...), versio
         update_in_progress = False
         current_progress = 0
         return RedirectResponse(url="/status?error=Module update failed", status_code=302)
+
+@app.post("/mitm/device-update")
+async def mitm_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...), apk_path: str = Form(...)):
+    if redirect := require_login(request):
+        return redirect
+
+    device_id = format_device_id(device_ip)
+
+    try:
+        apk_file = Path(apk_path)
+        if not apk_file.exists():
+            return {"success": False, "error": f"APK file not found: {apk_path}"}
+
+        log(f"Installing MITM version {version} on device {device_id}", device_id, "UPDATE")
+
+        # Stop MapWorld
+        await stop_apps(device_id, stop_pogo=False, stop_mapworld=True)
+
+        # Install the MITM APK
+        install_cmd = f'adb -s {device_id} install -r "{apk_file}"'
+        result = subprocess.run(install_cmd, shell=True, capture_output=True, text=True, timeout=TimeoutConfig.LONG)
+
+        if result.returncode == 0:
+            log(f"MITM version {version} installed successfully on device {device_id}", device_id, "UPDATE")
+            return {"success": True, "message": f"MITM updated to v{version}"}
+        else:
+            log(f"Failed to install MITM version {version}: {result.stderr}", device_id, "ERROR")
+            return {"success": False, "error": result.stderr}
+
+    except Exception as e:
+        log(f"Error updating MITM on device {device_id}: {str(e)}", device_id, "ERROR")
+        return {"success": False, "error": str(e)}
+
 
 @app.post("/pogo/device-update", response_class=HTMLResponse)
 async def pogo_device_update(request: Request, device_ip: str = Form(...), version: str = Form(...), apk_type: str = Form("google")):
@@ -7058,8 +7265,48 @@ async def api_status(request: Request, apk_type: str = "google"):
     if apk_type not in ("google", "samsung"):
         apk_type = "google"
     
-    status_data = await get_status_data_with_tailwind_classes()
+    log(f"API /status requested with apk_type={apk_type}", None, "DEBUG")
+    status_data = await get_status_data_with_tailwind_classes(apk_type)
     return status_data
+
+@app.get("/api/pogo-versions")
+async def api_pogo_versions(request: Request):
+    """Returns ALL available PoGO versions (Google and Samsung) for dropdown"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+
+    google_versions = get_available_local_google_versions()
+    samsung_versions = get_available_samsung_versions()
+
+    # Combine and sort all versions
+    all_versions = []
+    all_versions.extend(google_versions)
+    all_versions.extend(samsung_versions)
+
+    sorted_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return {
+        "versions": sorted_versions,
+        "latest": get_available_local_versions("all").get("latest", {}),
+        "previous": get_available_local_versions("all").get("previous", {})
+    }
+
+
+@app.get("/api/mitm-versions")
+async def api_mitm_versions(request: Request):
+    """Returns available MITM (MapWorld) versions for dropdown"""
+    if not is_logged_in(request):
+        return {"error": "Not authenticated"}
+
+    mitm_versions = get_available_mitm_versions()
+
+    return {
+        "versions": mitm_versions
+    }
 
 @app.get("/api/pif-versions")
 async def api_pif_versions(request: Request):
