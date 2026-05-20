@@ -48,8 +48,8 @@ The easiest way to run Rotomina is using Docker Compose with pre-built image:
 
 1. **Download the standalone configuration:**
 ```bash
-curl -O https://raw.githubusercontent.com/f3ger/rotomina/main/standalone-docker-compose.yml
-mv standalone-docker-compose.yml docker-compose.yml
+curl -O https://raw.githubusercontent.com/f3ger/rotomina/main/docker-compose-standalone.yml
+mv docker-compose-standalone.yml docker-compose.yml
 ```
 
 2. **Create necessary directories:**
