@@ -22,7 +22,13 @@ from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from uuid import uuid4
 
+# Discord Message Color Constants
 DISCORD_IMPORT_ERROR: str = ""
+DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
+DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
+DISCORD_COLOR_BLUE = 0x3498DB    # Info/Update
+DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
+
 try:
     import discord
     from discord import app_commands
@@ -758,7 +764,7 @@ def ttl_cache(ttl: int):
     return decorator
 
 # Discord Webhook Notification Function
-async def send_discord_webhook(message: str, title: str = None, color: int = 0x5865F2):
+async def send_discord_webhook(message: str, title: str = None, color: int = DISCORD_COLOR_BLUE):
     """Sends a notification via Discord webhook URL."""
     cfg = load_config()
     webhook_url = cfg.get("discord_webhook_url", "").strip()
@@ -786,7 +792,7 @@ async def send_discord_webhook(message: str, title: str = None, color: int = 0x5
 
 
 # Discord Notification Function (via Bot or Webhook)
-async def send_discord_notification(message: str, title: str = None, color: int = 0x5865F2):
+async def send_discord_notification(message: str, title: str = None, color: int = DISCORD_COLOR_BLUE):
     """Sends a notification via Discord webhook (if configured) or bot."""
     cfg = load_config()
     # Try webhook first if configured
@@ -818,11 +824,6 @@ async def send_discord_notification(message: str, title: str = None, color: int 
         log(f"Discord notification error: {e}", None, "ERROR")
         return False
 
-# Discord Message Color Constants
-DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
-DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
-DISCORD_COLOR_BLUE = 0x3498DB    # Info/Update
-DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
 
 # ─────────────────────────── Discord Bot ───────────────────────────
 
@@ -1054,27 +1055,27 @@ async def update_discord_status_embed():
 async def notify_device_offline(device_name: str, ip: str):
     add_discord_event(f"{device_name} went offline")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} ({ip}) went offline", "Device Offline", 0xE74C3C)
+    await send_discord_webhook(f"Device {device_name} ({ip}) went offline", "Device Offline", DISCORD_COLOR_RED)
 
 async def notify_device_online(device_name: str, ip: str):
     add_discord_event(f"{device_name} is back online")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} ({ip}) is back online", "Device Online", 0x2ECC71)
+    await send_discord_webhook(f"Device {device_name} ({ip}) is back online", "Device Online", DISCORD_COLOR_GREEN)
 
 async def notify_memory_restart(device_name: str, ip: str, memory: int, threshold: int):
     add_discord_event(f"{device_name} restarted — low memory")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Device {device_name} restarted due to low memory ({memory}MB < {threshold}MB)", "Memory Restart", 0xE67E22)
+    await send_discord_webhook(f"Device {device_name} restarted due to low memory ({memory}MB < {threshold}MB)", "Memory Restart", DISCORD_COLOR_ORANGE)
 
 async def notify_update_installed(device_name: str, ip: str, update_type: str, version: str):
     add_discord_event(f"{update_type} {version} installed on {device_name}")
     await update_discord_status_embed()
-    await send_discord_webhook(f"{update_type} {version} installed on {device_name}", "Update Installed", 0x2ECC71)
+    await send_discord_webhook(f"{update_type} {version} installed on {device_name}", "Update Installed", DISCORD_COLOR_GREEN)
 
 async def notify_update_downloaded(update_type: str, version: str):
     add_discord_event(f"{update_type} {version} downloaded")
     await update_discord_status_embed()
-    await send_discord_webhook(f"{update_type} {version} downloaded and ready for installation", "Update Downloaded", 0x3498DB)
+    await send_discord_webhook(f"{update_type} {version} downloaded and ready for installation", "Update Downloaded", DISCORD_COLOR_BLUE)
 
 
 # Token Validation Functions
@@ -1177,7 +1178,7 @@ async def notify_invalid_token(device_name: str, device_ip: str, error_message: 
     """Sends Discord notification when device token is invalid"""
     add_discord_event(f"Token invalid for {device_name}")
     await update_discord_status_embed()
-    await send_discord_webhook(f"Invalid token for {device_name} ({device_ip}): {error_message}", "Invalid Token", 0xE74C3C)
+    await send_discord_webhook(f"Invalid token for {device_name} ({device_ip}): {error_message}", "Invalid Token", DISCORD_COLOR_RED)
 
 # Device update tracking functions
 def mark_device_in_update(device_id: str, update_type: str) -> None:
