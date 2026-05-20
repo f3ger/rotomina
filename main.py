@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 # Discord Message Color Constants
+DISCORD_BOT_AVAILABLE = True
 DISCORD_IMPORT_ERROR: str = ""
 DISCORD_COLOR_RED = 0xE74C3C     # Error/Offline
 DISCORD_COLOR_GREEN = 0x2ECC71   # Success/Online
@@ -32,7 +33,6 @@ DISCORD_COLOR_ORANGE = 0xE67E22  # Warning/Restart
 try:
     import discord
     from discord import app_commands
-    DISCORD_BOT_AVAILABLE = True
 except ImportError as _discord_err:
     DISCORD_BOT_AVAILABLE = False
     DISCORD_IMPORT_ERROR = str(_discord_err)
