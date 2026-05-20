@@ -6462,16 +6462,31 @@ def save_device_rotom_config(
     
     # Restart device if checkbox is checked
     if restart_device == "on":
-        log(f"Restarting device {device_ip} after config save", None, "CONFIG")
-        try:
-            # Get control_enabled from device config
-            control_enabled = target_device.get("control_enabled", False)
-            # Run the async restart in a background task
-            asyncio.create_task(optimized_app_start(device_ip, control_enabled))
-            restart_msg = " and device restart triggered"
-        except Exception as e:
-            log(f"Failed to restart device {device_ip}: {e}", None, "ERROR")
-            restart_msg = " (device restart failed)"
+        if IsRotomMode == "on":
+            log(f"Restarting apps after config save (Rotom mode)", None, "CONFIG")
+            try:
+                device_id = format_device_id(device_ip)
+                control_enabled = target_device.get("control_enabled", False)
+                async def restart_apps_task():
+                    await optimized_app_start(device_id, control_enabled)
+                import threading
+                threading.Thread(target=lambda: asyncio.run(restart_apps_task())).start()
+                restart_msg = " and apps restart triggered"
+            except Exception as e:
+                log(f"Failed to restart apps {device_ip}: {e}", None, "ERROR")
+                restart_msg = " (apps restart failed)"
+        else:
+            log(f"Killing all apps after config save (not Rotom mode)", None, "CONFIG")
+            try:
+                device_id = format_device_id(device_ip)
+                # Kill both POGO and MapWorld using adb commands directly
+                pogo_package = get_device_package_name(device_id)
+                kill_cmd = f"am force-stop {pogo_package}; am force-stop com.github.furtif.furtifformaps"
+                adb_pool.execute_command(device_id, ["adb", "shell", kill_cmd])
+                restart_msg = " and all apps killed"
+            except Exception as e:
+                log(f"Failed to kill apps {device_ip}: {e}", None, "ERROR")
+                restart_msg = " (apps kill failed)"
     else:
         restart_msg = ""
     
