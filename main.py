@@ -5669,7 +5669,11 @@ async def update_api_status():
                     device_data = {}
                     log(f"No matching device data found for {device_id} in API response", device_id, "MONITOR")
                 else:
-                    log(f"Found device data for {device_id}: memFree={device_data.get('last_memory', {}).get('free', 'N/A')}", device_id, "MONITOR")
+                    # Try RotomNG format first, then fallback to RotomNG legacy format
+                    mem_free_kb = device_data.get('last_memory', {}).get('free', 'N/A')
+                    if mem_free_kb == 'N/A':
+                        mem_free_kb = device_data.get('lastMemory', {}).get('memFree', 'N/A')
+                    log(f"Found device data for {device_id}: memFree={mem_free_kb}", device_id, "MONITOR")
                 
                 # Get current status values from cache
                 current_cache = device_status_cache.get(device_id, {})
@@ -5687,7 +5691,10 @@ async def update_api_status():
                 
                 # Handle memory values - if API returns 0, device is likely rebooting
                 # Keep 0 so memory threshold checks are skipped (condition: mem_free > 0)
+                # Try RotomNG format first, then fallback to RotomNG legacy format
                 new_mem_free = device_data.get("last_memory", {}).get("free", 0)
+                if new_mem_free == 0:
+                    new_mem_free = device_data.get("lastMemory", {}).get("memFree", 0)
                 mem_free = new_mem_free
                 
                 if new_mem_free == 0:
@@ -5695,7 +5702,10 @@ async def update_api_status():
                 
                 # Handle isAlive status with improved grace period logic
                 current_is_alive = current_cache.get("is_alive", False)
+                # Try RotomNG format first, then fallback to RotomNG legacy format
                 new_is_alive = device_data.get("is_connected", False)
+                if not new_is_alive:
+                    new_is_alive = device_data.get("isAlive", False)
                 
                 # If device is newly detected as offline
                 if current_is_alive and not new_is_alive:
