@@ -1,0 +1,1 @@
+"""Rotomina application package."""
