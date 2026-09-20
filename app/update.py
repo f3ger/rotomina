@@ -1,0 +1,4184 @@
+"""Device update orchestration, apk/module handling, monitoring"""
+from dataclasses import dataclass
+from fastapi import WebSocket
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple, Set
+import asyncio
+import datetime
+import httpx
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+import traceback
+import xml.etree.ElementTree as ET
+import zipfile
+
+from . import state
+from .adb import adb_pool, check_adb_connection
+from .config import APK_DIR, BASE_DIR, DEFAULT_ARCH, EXTRACT_DIR, POGO_MIRROR_URL, S_APK_DIR, TimeoutConfig, load_config, update_device_info
+from .devices import ensure_device_token, get_device_details, get_device_package_name, read_device_furtif_config
+from .discord_bot import add_discord_event, notify_device_offline, notify_device_online, notify_memory_restart, notify_update_downloaded, notify_update_installed, update_discord_status_embed
+from .state import GITHUB_CACHE_TTL, device_runtimes, device_setup_tasks, device_status_cache, devices_in_update, update_progress
+from .utils import format_device_id, format_runtime, log, parse_version, ttl_cache
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Set[WebSocket] = set()
+        self.max_connections = 50  # Maximum concurrent connections
+
+    async def connect(self, websocket: WebSocket):
+        if len(self.active_connections) >= self.max_connections:
+            await websocket.close(code=1013, reason="Server overloaded")
+            log("Connection rejected: server at maximum capacity", None, "WARNING")
+            return
+        await websocket.accept()
+        self.active_connections.add(websocket)
+        log(f"WebSocket client connected ({len(self.active_connections)} active)", None, "API")
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.discard(websocket)
+        log(f"WebSocket client disconnected ({len(self.active_connections)} active)", None, "API")
+
+    async def broadcast(self, message: dict):
+        disconnected_websockets = set()
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                disconnected_websockets.add(connection)
+        for ws in disconnected_websockets:
+            self.active_connections.discard(ws)
+        if disconnected_websockets:
+            log(f"Removed {len(disconnected_websockets)} disconnected WebSocket(s) ({len(self.active_connections)} remaining)", None, "API")
+ws_manager = ConnectionManager()
+class VersionManager:
+    """
+    Manages device version information with a long-lived cache
+    and only fetches versions when actually needed.
+    """
+    def __init__(self):
+        self.version_cache = {}  # Format: {device_id: {"pogo": "0.251.0", "mitm": "1.5.2", "module": "Fork 3.2", "timestamp": 12345678}}
+        self.version_lock = threading.Lock()
+        self.forced_refresh_device = set()  # Devices that need forced refresh
+        
+    def mark_for_refresh(self, device_id):
+        """Marks a device for refresh at next query"""
+        with self.version_lock:
+            self.forced_refresh_device.add(device_id)
+            
+    def clear_refresh_marker(self, device_id):
+        """Removes refresh marker for a device"""
+        with self.version_lock:
+            self.forced_refresh_device.discard(device_id)
+    
+    def get_version_info(self, device_id, force_refresh=False):
+        """
+        Gets version information using individual commands,
+        with improved timeout handling and caching.
+        
+        Args:
+            device_id: Device identifier
+            force_refresh: Whether to ignore cache
+            
+        Returns:
+            dict: Version information or None on error
+        """
+        device_id = format_device_id(device_id)
+        current_time = time.time()
+        
+        # Check if cache entry exists and is current
+        with self.version_lock:
+            needs_refresh = (
+                force_refresh or
+                device_id in self.forced_refresh_device or
+                device_id not in self.version_cache or
+                current_time - self.version_cache[device_id].get("timestamp", 0) > 86400  # 24-hour cache lifetime
+            )
+            
+            # If device is in update, use cache regardless
+            if device_id in devices_in_update and devices_in_update[device_id]["in_update"]:
+                needs_refresh = False
+                log("In update process, using cached version info", device_id, "VERSION")
+            
+            # Remove refresh marker if present
+            self.forced_refresh_device.discard(device_id)
+            
+            if not needs_refresh and device_id in self.version_cache:
+                return self.version_cache[device_id]
+        
+        # Initialize version info with defaults
+        version_info = {
+            "pogo_version": "N/A",
+            "mitm_version": "N/A",
+            "module_version": "N/A",
+            "timestamp": current_time
+        }
+        
+        # Try to get previous values from cache to use as fallback
+        previous_info = None
+        if device_id in self.version_cache:
+            previous_info = self.version_cache[device_id]
+        
+        success = False
+        
+        # Use individual commands with shorter timeouts (10 seconds each)
+        try:
+            # Try PoGo version
+            try:
+                pogo_package = get_device_package_name(device_id)
+                pogo_cmd = f'adb -s {device_id} shell "dumpsys package {pogo_package} | grep versionName"'
+                pogo_result = subprocess.run(pogo_cmd, shell=True, capture_output=True, text=True, timeout=TimeoutConfig.MEDIUM)
+                if pogo_result.returncode == 0 and pogo_result.stdout:
+                    pogo_match = re.search(r'versionName=(\d+\.\d+\.\d+)', pogo_result.stdout)
+                    if pogo_match:
+                        version_info["pogo_version"] = pogo_match.group(1)
+                        log(f"PoGo: {version_info['pogo_version']}", device_id, "VERSION")
+                        success = True
+            except Exception as e:
+                log(f"PoGo version error: {str(e)}", device_id, "ERROR")
+            
+            # Try MITM version
+            try:
+                mitm_cmd = f'adb -s {device_id} shell "dumpsys package com.github.furtif.furtifformaps | grep versionName"'
+                mitm_result = subprocess.run(mitm_cmd, shell=True, capture_output=True, text=True, timeout=TimeoutConfig.MEDIUM)
+                if mitm_result.returncode == 0 and mitm_result.stdout:
+                    mitm_match = re.search(r'versionName=(\d+\.\d+(?:\.\d+)?)', mitm_result.stdout)
+                    if mitm_match:
+                        version_info["mitm_version"] = mitm_match.group(1)
+                        log(f"MITM: {version_info['mitm_version']}", device_id, "VERSION")
+                        success = True
+            except Exception as e:
+                log(f"MITM version error: {str(e)}", device_id, "ERROR")
+            
+            # Try Fix module
+            try:
+                fix_cmd = f'adb -s {device_id} shell "su -c \'cat /data/adb/modules/playintegrityfix/module.prop\'"'
+                fix_result = subprocess.run(fix_cmd, shell=True, capture_output=True, text=True, timeout=10)
+                if fix_result.returncode == 0 and fix_result.stdout:
+                    version_match = re.search(r'version=v?(\d+(?:\.\d+)?.*|v?\d+)', fix_result.stdout)
+                    if version_match:
+                        module_version = version_match.group(1).strip()
+                        version_info["module_version"] = f"Fix {module_version}"
+                        log(f"Module: {version_info['module_version']}", device_id, "VERSION")
+                        success = True
+            except Exception as e:
+                log(f"Fix module version error: {str(e)}", device_id, "ERROR")
+            
+            # Try Fork module if Fix not found
+            if version_info["module_version"] == "N/A":
+                try:
+                    fork_cmd = f'adb -s {device_id} shell "su -c \'cat /data/adb/modules/playintegrityfork/module.prop\'"'
+                    fork_result = subprocess.run(fork_cmd, shell=True, capture_output=True, text=True, timeout=10)
+                    if fork_result.returncode == 0 and fork_result.stdout:
+                        version_match = re.search(r'version=v?(\d+(?:\.\d+)?.*|v?\d+)', fork_result.stdout)
+                        if version_match:
+                            module_version = version_match.group(1).strip()
+                            version_info["module_version"] = f"Fork {module_version}"
+                            log(f"Module: {version_info['module_version']}", device_id, "VERSION")
+                            success = True
+                except Exception as e:
+                    log(f"Fork module version error: {str(e)}", device_id, "ERROR")
+            
+            # Update cache if we got at least one value
+            if success:
+                with self.version_lock:
+                    self.version_cache[device_id] = version_info
+                log("Version info retrieved", device_id, "VERSION")
+                return version_info
+                
+        except Exception as e:
+            log(f"Version check error: {str(e)}", device_id, "ERROR")
+        
+        # Return cached data if we have it, rather than failing completely
+        if previous_info:
+            log("Using cached version info as fallback", device_id, "VERSION")
+            return previous_info
+        
+        # If all else fails
+        log("No version information available", device_id, "VERSION")
+        return version_info
+
+    def get_devices_needing_pogo_update(self, latest_version):
+        """
+        Finds devices needing a PoGo update
+        
+        Args:
+            latest_version: The latest available PoGo version
+            
+        Returns:
+            list: List of device IDs needing update
+        """
+        config = load_config()
+        devices_to_update = []
+        
+        for device in config.get("devices", []):
+            device_id = device["ip"]
+            
+            # Check ADB connection only once per device
+            connected, error = check_adb_connection(device_id)
+            if not connected:
+                log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
+                continue
+                
+            # Get version info from cache (no force refresh)
+            version_info = self.get_version_info(device_id, force_refresh=False)
+            
+            if not version_info:
+                log("No version information available", device_id, "VERSION")
+                continue
+                
+            installed_version = version_info.get("pogo_version", "N/A")
+            
+            # Compare versions
+            if installed_version == "N/A":
+                log("Unknown PoGo version, will update", device_id, "UPDATE")
+                devices_to_update.append(device_id)
+            elif installed_version != latest_version:
+                log(f"Needs update from {installed_version} to {latest_version}", device_id, "UPDATE")
+                devices_to_update.append(device_id)
+            else:
+                log(f"Already has latest version {latest_version}, skipping", device_id, "UPDATE")
+                
+        return devices_to_update
+def get_devices_needing_module_update(self, latest_version, module_type="fork"):
+        """
+        Finds devices needing a PlayIntegrityFork module update
+        
+        Args:
+            latest_version: The latest available module version
+            module_type: Deprecated, always uses "fork"
+            
+        Returns:
+            list: List of device IDs needing update
+        """
+        config = load_config()
+        devices_to_update = []
+        
+        log(f"Checking {len(config.get('devices', []))} devices for FORK module updates", None, "UPDATE")
+        
+        # Get a set of device IPs from the config for faster lookup
+        config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
+        
+        for device in config.get("devices", []):
+            device_id = device["ip"]
+            
+            # Skip devices that are not in the config (this is a safety check)
+            if device_id not in config_device_ips:
+                log("Not found in config, skipping update check", device_id, "UPDATE")
+                continue
+            
+            # Check ADB connection only once per device
+            connected, error = check_adb_connection(device_id)
+            if not connected:
+                log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
+                continue
+                
+            # Get version info from cache (no force refresh)
+            version_info = self.get_version_info(device_id, force_refresh=False)
+            
+            if not version_info:
+                log("No version information available", device_id, "VERSION")
+                continue
+                
+            installed_module = version_info.get("module_version", "N/A").strip()
+            
+            # Skip devices without any module installed
+            if installed_module == "N/A":
+                log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
+                continue
+                
+            module_is_fork = "Fork" in installed_module
+            
+            # Skip devices with Fix module - only update Fork devices
+            if not module_is_fork:
+                log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
+                continue
+            
+            # Extract current version
+            version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
+                
+            if version_match:
+                current_version = version_match.group(1)
+                log(f"Module version: {current_version}, available: {latest_version}", device_id, "VERSION")
+                
+                # Compare version numbers
+                try:
+                    current_tuple = parse_version(current_version)
+                    new_tuple = parse_version(latest_version)
+                    
+                    if current_tuple < new_tuple:
+                        log(f"Update needed: {current_version} -> {latest_version}", device_id, "UPDATE")
+                        devices_to_update.append(device_id)
+                    else:
+                        log("Already has latest version, skipping update", device_id, "UPDATE")
+                except (ValueError, AttributeError):
+                    log("Invalid version format for comparison", device_id, "ERROR")
+            else:
+                log(f"Could not parse version from {installed_module}, scheduling update", device_id, "UPDATE")
+                devices_to_update.append(device_id)
+                
+        log(f"Found {len(devices_to_update)} devices needing FORK module update", None, "UPDATE")
+        
+        # Final verification that all devices to update are in the config
+        devices_to_update = [dev for dev in devices_to_update if dev in config_device_ips]
+        
+        return devices_to_update
+version_manager = VersionManager()
+def mark_device_in_update(device_id: str, update_type: str) -> None:
+    """Marks a device as being in update process"""
+    device_id = format_device_id(device_id)
+    devices_in_update[device_id] = {
+        "in_update": True,
+        "update_type": update_type,
+        "started_at": time.time()
+    }
+    log(f"Marked for {update_type} update - excluded from automatic restarts", device_id, "UPDATE")
+def clear_device_update_status(device_id: str) -> None:
+    """Removes the update marking from a device"""
+    device_id = format_device_id(device_id)
+    if device_id in devices_in_update:
+        del devices_in_update[device_id]
+        log("Update completed - normal monitoring restored", device_id, "UPDATE")
+async def stop_apps(device_id: str, stop_pogo: bool = True, stop_mapworld: bool = True) -> bool:
+    """
+    Stops Pokemon GO and/or MapWorld on the device.
+
+    Args:
+        device_id: Device identifier
+        stop_pogo: Whether to stop Pokemon GO (default: True)
+        stop_mapworld: Whether to stop MapWorld (default: True)
+
+    Returns:
+        bool: True if stop commands succeeded, False otherwise
+    """
+    device_id = format_device_id(device_id)
+
+    commands = []
+    if stop_mapworld:
+        commands.append("am force-stop com.github.furtif.furtifformaps")
+    if stop_pogo:
+        pogo_package = get_device_package_name(device_id)
+        commands.append(f"am force-stop {pogo_package}")
+
+    if not commands:
+        return True
+
+    stop_cmd = "; ".join(commands)
+    stop_result = adb_pool.execute_command(device_id, ["adb", "shell", stop_cmd])
+
+    if stop_result.returncode != 0:
+        log(f"Warning: Failed to stop apps: {stop_result.stderr}", device_id, "LOGIN")
+        return False
+
+    await asyncio.sleep(2)
+    return True
+async def optimized_app_start(device_id: str, run_login: bool = True) -> bool:
+    """
+    Starts MapWorld and Pokemon GO on the device.
+    
+    Prerequisites:
+    - Device token must be configured in Rotomina settings
+    - Token is automatically synced to device before app start
+    
+    Flow:
+    1. Verify device is in config
+    2. Ensure ADB connection
+    3. Sync device token (ensure_device_token)
+    4. Stop both apps
+    5. Start MapWorld
+    6. Execute start sequence based on RotomTryAutoStart setting
+    
+    Args:
+        device_id: Device identifier
+        run_login: Whether to perform the start sequence (default: True)
+        
+    Returns:
+        bool: True if startup successful, False otherwise
+    """
+    device_id = format_device_id(device_id)
+    
+    try:
+        # Verify this device is in the config
+        config = load_config()
+        device = next((dev for dev in config.get("devices", []) if dev["ip"] == device_id), None)
+        if not device:
+            log("Not found in config, not starting app", device_id, "LOGIN")
+            return False
+        
+        # Ensure ADB connection
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot establish ADB connection, app start failed", device_id, "ERROR")
+            return False
+        
+        # Ensure device has correct token before starting app (also returns device config)
+        token_success, token_error, furtif_config = await ensure_device_token(device_id)
+        if not token_success:
+            log(f"Failed to ensure device token: {token_error}", device_id, "ERROR")
+            return False
+
+        # If ensure_device_token didn't return a config (e.g. no token configured), read it now
+        if not furtif_config:
+            furtif_config = read_device_furtif_config(device_id)
+
+        # Check if IsRotomMode is enabled - if not, device should not auto-start
+        if furtif_config and not furtif_config.get("IsRotomMode", False):
+            log("Device is not in Rotom mode, skipping auto-start", device_id, "LOGIN")
+            return False
+
+        # Update stored config
+        if furtif_config:
+            update_device_info(device_id, {
+                "display_name": device.get("display_name", device_id),
+                "pogo_version": device.get("pogo_version", "N/A"),
+                "mitm_version": device.get("mitm_version", "N/A"),
+                "module_version": device.get("module_version", "N/A")
+            }, furtif_config)
+
+        # Force stop both apps
+        await stop_apps(device_id)
+        
+        # Start Furtif app
+        start_result = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"]
+        )
+        
+        if start_result.returncode != 0:
+            log(f"Failed to start MITM app: {start_result.stderr}", device_id, "ERROR")
+            return False
+        
+        if not run_login:
+            return True
+            
+        # Wait for app to load
+        await asyncio.sleep(5)
+
+        # Execute start sequence with Furtif config
+        start_success = await optimized_login_sequence(device_id, furtif_config=furtif_config)
+        
+        if start_success:
+            log("Apps started successfully", device_id, "LOGIN")
+            return True
+        else:
+            log("App start sequence failed", device_id, "ERROR")
+            return False
+            
+    except Exception as e:
+        log(f"Error in optimized app start: {str(e)}", device_id, "ERROR")
+        return False
+async def optimized_login_sequence(device_id: str, max_retries: int = 3, furtif_config: dict = None) -> bool:
+    """
+    Simplified start sequence for MapWorld.
+    
+    Prerequisites:
+    - Device token must already be on the device (handled by ensure_device_token)
+    - No Discord login is needed
+    
+    Behavior based on RotomTryAutoStart:
+    - TRUE:  Wait 40 seconds for automatic startup, verify apps running
+    - FALSE: Click "Recheck Service Status" -> "Start service", wait 40 seconds
+    
+    On failure (crash): Restart MapWorld and retry (max 3 attempts)
+    After all retries fail: Wait 5 minutes, then one final attempt
+
+    Args:
+        device_id: Device identifier
+        max_retries: Maximum number of retry attempts (default: 3)
+        furtif_config: MapWorld config settings (for RotomTryAutoStart)
+
+    Returns:
+        bool: True if apps started successfully, False otherwise
+    """
+    device_id = format_device_id(device_id)
+    temp_dir = Path(tempfile.mkdtemp())
+    
+    # Determine startup mode from furtif_config
+    autostart_enabled = furtif_config.get("RotomTryAutoStart", False) if furtif_config else False
+    
+    log(f"Start sequence: RotomTryAutoStart={autostart_enabled}", device_id, "LOGIN")
+
+    try:
+        async def find_and_tap_element(search_terms: list, max_attempts: int = 5,
+                                      wait_time: int = 2, just_check: bool = False):
+            """Searches UI dump for elements matching search terms and taps them"""
+            dump_file = temp_dir / "dump.xml"
+
+            for attempt in range(max_attempts):
+                try:
+                    dump_cmd = 'uiautomator dump /sdcard/dump.xml'
+                    dump_result = adb_pool.execute_command(device_id, ["adb", "shell", dump_cmd])
+
+                    if "ERROR" in dump_result.stdout:
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                    pull_cmd = ["adb", "pull", "/sdcard/dump.xml", str(dump_file)]
+                    pull_result = adb_pool.execute_command(device_id, pull_cmd)
+
+                    if pull_result.returncode != 0 or not dump_file.exists():
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                    try:
+                        if dump_file.stat().st_size < 100:
+                            await asyncio.sleep(wait_time)
+                            continue
+
+                        with open(dump_file, 'r', encoding='utf-8') as f:
+                            content = f.read()
+
+                        if not content.strip().startswith('<?xml') or 'hierarchy' not in content:
+                            await asyncio.sleep(wait_time)
+                            continue
+
+                        tree = ET.parse(dump_file)
+                        root = tree.getroot()
+
+                        if root.tag != 'hierarchy' or len(root) == 0:
+                            await asyncio.sleep(wait_time)
+                            continue
+
+                    except (ET.ParseError, UnicodeDecodeError, OSError):
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                    # Search for matches
+                    for elem in root.iter("node"):
+                        elem_text = elem.get("text", "")
+                        if not elem_text:
+                            continue
+
+                        elem_text_lower = elem_text.lower()
+
+                        found_match = False
+                        for term in search_terms:
+                            term_lower = term.lower()
+                            if term_lower == elem_text_lower or term_lower in elem_text_lower:
+                                found_match = True
+                                break
+
+                        if found_match:
+                            if just_check:
+                                return True
+
+                            if elem.get("clickable") == "true" and elem.get("enabled") == "true":
+                                bounds = elem.get("bounds", "")
+                                match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
+                                if match:
+                                    x1, y1, x2, y2 = map(int, match.groups())
+                                    center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
+                                    tap_cmd = f'input tap {center_x} {center_y}'
+                                    adb_pool.execute_command(device_id, ["adb", "shell", tap_cmd])
+                                    log(f"Tapped '{elem_text}' at ({center_x}, {center_y})", device_id, "LOGIN")
+                                    return True
+
+                except Exception:
+                    pass
+
+                await asyncio.sleep(wait_time)
+
+            return False
+
+        async def check_apps_running():
+            """Checks if both PoGo and MapWorld are running"""
+            pogo_package = get_device_package_name(device_id)
+            check_cmd = f'pidof {pogo_package}; echo "---SEPARATOR---"; pidof com.github.furtif.furtifformaps'
+            result = adb_pool.execute_command(device_id, ["adb", "shell", check_cmd])
+
+            sections = result.stdout.split("---SEPARATOR---")
+            pogo_running = len(sections) > 0 and sections[0].strip().isdigit()
+            mitm_running = len(sections) > 1 and sections[1].strip().isdigit()
+
+            return pogo_running and mitm_running
+
+        async def restart_mapworld():
+            """Restarts MapWorld app"""
+            log("Restarting MapWorld", device_id, "LOGIN")
+            await stop_apps(device_id, stop_pogo=False)
+            
+            start_cmd = "am start -n com.github.furtif.furtifformaps/com.github.furtif.furtifformaps.MainActivity"
+            adb_pool.execute_command(device_id, ["adb", "shell", start_cmd])
+            await asyncio.sleep(5)
+
+        async def attempt_start():
+            """
+            Single attempt to start the apps.
+            Returns True if apps are running, False otherwise.
+            """
+            if autostart_enabled:
+                # Autostart mode: Just wait for automatic startup
+                # MapWorld waits 10 sec for user input, then starts automatically
+                log("Autostart mode - waiting 40 seconds for automatic startup", device_id, "LOGIN")
+                await asyncio.sleep(40)
+            else:
+                # Manual mode: Click buttons to start
+                log("Manual mode - clicking start buttons", device_id, "LOGIN")
+                await asyncio.sleep(5)  # Wait for UI to load
+                
+                recheck_success = await find_and_tap_element(["Recheck Service Status"], max_attempts=3)
+                if recheck_success:
+                    await asyncio.sleep(2)
+                    start_success = await find_and_tap_element(["Start service"], max_attempts=3)
+                    if start_success:
+                        log("Clicked Start service, waiting 40 seconds", device_id, "LOGIN")
+                        await asyncio.sleep(40)
+                    else:
+                        log("Could not find 'Start service' button", device_id, "ERROR")
+                        return False
+                else:
+                    log("Could not find 'Recheck Service Status' button", device_id, "ERROR")
+                    return False
+            
+            # Check if apps are running
+            if await check_apps_running():
+                log("Both apps are running successfully", device_id, "LOGIN")
+                return True
+            else:
+                log("Apps not running after wait period", device_id, "LOGIN")
+                return False
+
+        # === Main retry loop ===
+        for attempt in range(max_retries):
+            log(f"Start attempt {attempt + 1}/{max_retries}", device_id, "LOGIN")
+            
+            if await attempt_start():
+                return True
+            
+            # Apps not running - restart MapWorld and try again
+            if attempt < max_retries - 1:
+                log(f"Attempt {attempt + 1} failed, restarting MapWorld", device_id, "LOGIN")
+                await restart_mapworld()
+
+        # All retries failed - wait 5 minutes before final attempt
+        log(f"All {max_retries} attempts failed, waiting 5 minutes for final attempt", device_id, "LOGIN")
+        await asyncio.sleep(300)  # 5 minutes
+        
+        # Final attempt after delay
+        log("Final attempt after 5 minute delay", device_id, "LOGIN")
+        await restart_mapworld()
+        
+        if await attempt_start():
+            log("Final attempt successful", device_id, "LOGIN")
+            return True
+        
+        log("Start sequence failed completely", device_id, "ERROR")
+        return False
+
+    except Exception as e:
+        log(f"Error in start sequence: {str(e)}", device_id, "ERROR")
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+def fetch_pogo_from_mirror(mirror_url: str, seen_versions: set):
+    """Fetch PoGO versions from a mirror URL"""
+    processed = []
+    try:
+        response = httpx.get(
+            f"{mirror_url}/index.json",
+            timeout=10
+        )
+        if response.status_code == 200:
+            versions_data = response.json()
+            for entry in versions_data:
+                if entry.get("arch") != DEFAULT_ARCH:
+                    continue
+                clean_version = entry["version"].replace(".apkm", "")
+                if clean_version not in seen_versions:
+                    processed.append({
+                        "version": clean_version,
+                        "filename": f"com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
+                        "url": f"{mirror_url}/apks/com.nianticlabs.pokemongo_{DEFAULT_ARCH}_{clean_version}.apkm",
+                        "date": entry.get("date", ""),
+                        "arch": DEFAULT_ARCH,
+                        "source": mirror_url
+                    })
+                    seen_versions.add(clean_version)
+        else:
+            log(f"Mirror returned status code {response.status_code}", None, "ERROR")
+    except Exception as e:
+        log(f"Mirror check error for {mirror_url}: {str(e)}", None, "ERROR")
+    return processed
+def fetch_pogo_from_github(repo: str, source_name: str, seen_versions: set):
+    """Fetch PoGO versions from a GitHub repo releases"""
+    processed = []
+    try:
+        api_url = f"https://api.github.com/repos/{repo}/releases?per_page=10"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        response = httpx.get(api_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            releases = response.json()
+            for release in releases:
+                if not isinstance(release, dict):
+                    continue
+                
+                # Find .apkm asset
+                assets = release.get("assets", [])
+                apkm_asset = next(
+                    (asset for asset in assets
+                     if isinstance(asset, dict) and 
+                     asset.get("name", "").endswith(".apkm")),
+                    None
+                )
+                if not apkm_asset:
+                    continue
+
+                name = apkm_asset.get("name", "").strip()
+                if not name:
+                    continue
+
+                parsed = parse_pogo_apkm_filename(name)
+                if not parsed:
+                    continue
+
+                version, arch = parsed
+                if version in seen_versions:
+                    continue
+
+                filename = f"com.nianticlabs.pokemongo_{arch}_{version}.apkm"
+                processed.append({
+                    "version": version,
+                    "filename": filename,
+                    "url": apkm_asset.get("browser_download_url"),
+                    "date": release.get("published_at", ""),
+                    "arch": arch,
+                    "source": source_name,
+                    "source_repo": repo
+                })
+                seen_versions.add(version)
+                    
+        elif response.status_code == 403:
+            log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
+        elif response.status_code == 404:
+            log(f"GitHub repository not found: {repo}", None, "ERROR")
+        else:
+            log(f"GitHub API HTTP {response.status_code} for {source_name}", None, "API")
+            
+    except Exception as e:
+        log(f"GitHub fetch error for {source_name}: {str(e)}", None, "ERROR")
+    
+    return processed
+def parse_pogo_apkm_filename(filename: str) -> Optional[Tuple[str, str]]:
+    """Parse PoGO APKM filenames and return (version, arch)."""
+    name = Path(filename).name
+
+    match = re.match(r'^com\.nianticlabs\.pokemongo_([^_]+)_(\d+\.\d+\.\d+)\.apkm$', name)
+    if match:
+        return match.group(2), match.group(1)
+
+    match = re.match(
+        r'^com\.nianticlabs\.pokemongo_(\d+\.\d+\.\d+(?:-[^_]+)?)_([^_]+)\.apkm$',
+        name
+    )
+    if match:
+        version_match = re.search(r'(\d+\.\d+\.\d+)', match.group(1))
+        arch = match.group(2)
+        if version_match:
+            return version_match.group(1), arch
+
+    version_match = re.search(r'(\d+\.\d+\.\d+)', name)
+    arch_match = re.search(r'(arm64-v8a|armeabi-v7a|x86_64|x86)', name)
+    if version_match:
+        return version_match.group(1), arch_match.group(1) if arch_match else DEFAULT_ARCH
+
+    return None
+def get_available_google_versions() -> List[Dict]:
+    """Get Google/APKM versions from configured sources and local files"""
+    processed = []
+    seen_versions = set()
+    
+    # Get configured sources from config
+    config = load_config()
+    sources = config.get("pogo_sources", [])
+    enabled_sources = [s for s in sources if s.get("enabled", True)]
+    
+    if not enabled_sources:
+        log("No enabled PoGO sources found, using default", None, "CONFIG")
+        enabled_sources = [{"name": "UnownHash Mirror", "type": "mirror", "url": POGO_MIRROR_URL, "enabled": True}]
+    
+    # 1. Fetch from all enabled sources
+    for source in enabled_sources:
+        source_type = source.get("type", "mirror")
+        source_name = source.get("name", "Unknown")
+        
+        if source_type == "mirror":
+            mirror_url = source.get("url", "")
+            if mirror_url:
+                log(f"Fetching PoGO versions from mirror: {source_name}", None, "API")
+                versions = fetch_pogo_from_mirror(mirror_url, seen_versions)
+                # Tag as Google versions
+                for v in versions:
+                    v["apk_type"] = "google"
+                    v["type_label"] = "G"
+                processed.extend(versions)
+        elif source_type == "github":
+            repo = source.get("repo", "")
+            if repo:
+                log(f"Fetching PoGO versions from GitHub: {source_name}", None, "API")
+                versions = fetch_pogo_from_github(repo, source_name, seen_versions)
+                # Tag as Google versions
+                for v in versions:
+                    v["apk_type"] = "google"
+                    v["type_label"] = "G"
+                processed.extend(versions)
+    
+    # 2. Include locally available APKM files
+    try:
+        if APK_DIR.exists():
+            for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
+    
+    return processed
+def get_available_samsung_versions() -> List[Dict]:
+    """Get Samsung/APK versions from local S_APK_DIR"""
+    processed = []
+    seen_versions = set()
+    
+    # Scan local Samsung APK files
+    try:
+        if S_APK_DIR.exists():
+            for apk_file in S_APK_DIR.glob("com.nianticlabs.pokemongo_*.apk"):
+                # Pattern: com.nianticlabs.pokemongo_<arch>_<version>.apk
+                match = re.search(r'com\.nianticlabs\.pokemongo_[^_]+_(.+)\.apk', apk_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": apk_file.name,
+                            "url": "",
+                            "date": "",
+                            "arch": DEFAULT_ARCH,
+                            "source": "local",
+                            "apk_type": "samsung",
+                            "type_label": "S"
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local Samsung APK files: {str(e)}", None, "ERROR")
+    
+    return processed
+def get_available_local_google_versions() -> List[Dict]:
+    """Get Google/APKM versions from local APK_DIR only"""
+    processed = []
+    seen_versions = set()
+
+    try:
+        if APK_DIR.exists():
+            for apkm_file in APK_DIR.glob("com.nianticlabs.pokemongo_*.apkm"):
+                parsed = parse_pogo_apkm_filename(apkm_file.name)
+                if not parsed:
+                    continue
+
+                local_version, arch = parsed
+                if local_version not in seen_versions:
+                    processed.append({
+                        "version": local_version,
+                        "filename": apkm_file.name,
+                        "url": "",
+                        "date": "",
+                        "arch": arch,
+                        "source": "local",
+                        "apk_type": "google",
+                        "type_label": "G"
+                    })
+                    seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local APKM files: {str(e)}", None, "ERROR")
+
+    return processed
+def get_available_mitm_versions() -> List[Dict]:
+    """Get available MITM (MapWorld) versions from local APK directory"""
+    processed = []
+    seen_versions = set()
+    mitm_dir = BASE_DIR / "data" / "apks"
+
+    try:
+        if mitm_dir.exists():
+            for mitm_file in mitm_dir.glob("mapworld_*.apk"):
+                match = re.search(r'mapworld_v(\d+\.\d+)_\d+\.apk', mitm_file.name)
+                if match:
+                    local_version = match.group(1)
+                    if local_version not in seen_versions:
+                        processed.append({
+                            "version": local_version,
+                            "filename": mitm_file.name,
+                            "path": str(mitm_file)
+                        })
+                        seen_versions.add(local_version)
+    except Exception as e:
+        log(f"Error scanning local MITM files: {str(e)}", None, "ERROR")
+
+    # Sort by version (descending)
+    sorted_versions = sorted(
+        processed,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return sorted_versions
+def get_available_local_versions(apk_type: str = "all") -> Dict:
+    """Get available PoGO versions from local APK directories only"""
+    all_versions = []
+
+    if apk_type in ("all", "google"):
+        all_versions.extend(get_available_local_google_versions())
+    if apk_type in ("all", "samsung"):
+        all_versions.extend(get_available_samsung_versions())
+
+    distinct_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    return {
+        "latest": distinct_versions[0] if distinct_versions else {},
+        "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
+    }
+@ttl_cache(ttl=3600)
+def get_available_versions(apk_type: str = "all") -> Dict:
+    """
+    Get available PoGO versions
+    
+    Args:
+        apk_type: "google" for APKM, "samsung" for APK, "all" for both
+    
+    Returns:
+        Dict with "latest" and "previous" versions
+    """
+    all_versions = []
+    
+    # Get Google versions if requested
+    if apk_type in ("all", "google"):
+        google_versions = get_available_google_versions()
+        all_versions.extend(google_versions)
+    
+    # Get Samsung versions if requested
+    if apk_type in ("all", "samsung"):
+        samsung_versions = get_available_samsung_versions()
+        all_versions.extend(samsung_versions)
+    
+    # Sort all versions together
+    distinct_versions = sorted(
+        all_versions,
+        key=lambda x: [int(n) for n in x["version"].split(".")],
+        reverse=True
+    )
+
+    if distinct_versions:
+        latest_ver = distinct_versions[0]["version"]
+        prev_ver = distinct_versions[1]["version"] if len(distinct_versions) > 1 else "N/A"
+        type_info = f"[{apk_type}]" if apk_type != "all" else "[all]"
+        log(f"Found versions {type_info} - Latest: {latest_ver}, Previous: {prev_ver}", None, "VERSION")
+    else:
+        log(f"No versions found for type: {apk_type}", None, "VERSION")
+
+    return {
+        "latest": distinct_versions[0] if distinct_versions else {},
+        "previous": distinct_versions[1] if len(distinct_versions) > 1 else {}
+    }
+def download_apk(version_info: Dict) -> Path:
+    try:
+        log(f"Downloading {version_info['filename']}...", None, "UPDATE")
+        response = httpx.get(version_info["url"], follow_redirects=True)
+        
+        # Determine target directory based on apk_type
+        apk_type = version_info.get("apk_type", "google")
+        if apk_type == "samsung":
+            target_dir = S_APK_DIR
+        else:
+            target_dir = APK_DIR
+        
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / version_info["filename"]
+        
+        with open(target_path, "wb") as f:
+            f.write(response.content)
+        
+        get_available_versions.cache_clear()
+        log(f"Downloaded {version_info['version']} ({apk_type}), cache cleared", None, "UPDATE")
+        
+        return target_path
+    except Exception as e:
+        log(f"Download failed: {str(e)}", None, "ERROR")
+        raise
+def ensure_latest_apk_downloaded():
+    APK_DIR.mkdir(parents=True, exist_ok=True)
+    versions = get_available_versions()
+    
+    if not versions.get("latest"):
+        log("No latest version information available", None, "VERSION")
+        return
+        
+    latest_version = versions["latest"]["version"]
+    log(f"Latest available version: {latest_version}", None, "VERSION")
+    
+    target_file = APK_DIR / versions["latest"]["filename"]
+    if not target_file.exists():
+        log(f"New version {latest_version} not found locally, downloading", None, "UPDATE")
+        download_apk(versions["latest"])
+        asyncio.create_task(notify_update_downloaded("Pokemon GO", latest_version))
+        asyncio.create_task(update_ui_with_new_version())
+    else:
+        log(f"Latest version {latest_version} already downloaded", None, "UPDATE")
+async def update_ui_with_new_version():
+    """Updates all connected WebSocket clients with new version information"""
+    try:
+        await asyncio.sleep(1)
+        
+        get_available_versions.cache_clear()
+        
+        status_data = await get_status_data()
+        
+        latest = status_data.get("pogo_latest", "N/A")
+        previous = status_data.get("pogo_previous", "N/A")
+        log(f"Sending WebSocket update - Latest: {latest}, Previous: {previous}", None, "API")
+        
+        await ws_manager.broadcast(status_data)
+        log("WebSocket update for new PoGo version sent", None, "API")
+    except Exception as e:
+        log(f"Error sending WebSocket update: {str(e)}", None, "ERROR")
+        import traceback
+        traceback.print_exc()
+def unzip_apk(apk_path: Path, extract_dir: Path):
+    try:
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        
+        if any(extract_dir.iterdir()):
+            log(f"APK already extracted to {extract_dir}, skipping", None, "UPDATE")
+            return
+            
+        log(f"Extracting {apk_path.name}", None, "UPDATE")
+        with zipfile.ZipFile(apk_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+    except zipfile.BadZipFile:
+        log(f"Invalid ZIP file: {apk_path.name}", None, "ERROR")
+        shutil.rmtree(extract_dir)
+        raise
+    except Exception as e:
+        log(f"Extraction error: {str(e)}", None, "ERROR")
+        raise
+def extract_pogo_version_from_apkm(apkm_path: Path) -> str:
+    """Extracts the Pokemon GO version string from an .apkm file.
+    The .apkm is a ZIP containing APK files. Finds base.apk (or the largest APK)
+    and reads its AndroidManifest.xml to extract the version."""
+    try:
+        with zipfile.ZipFile(apkm_path, 'r') as apkm_zip:
+            apk_entries = [f for f in apkm_zip.namelist() if f.endswith('.apk')]
+            if not apk_entries:
+                raise Exception("No .apk files found inside .apkm archive")
+
+            target_apk = 'base.apk' if 'base.apk' in apk_entries else max(
+                apk_entries, key=lambda f: apkm_zip.getinfo(f).file_size
+            )
+            apk_data = apkm_zip.read(target_apk)
+
+        import io
+        with zipfile.ZipFile(io.BytesIO(apk_data), 'r') as apk_zip:
+            manifest_data = apk_zip.read('AndroidManifest.xml')
+
+        if len(manifest_data) < 4 or manifest_data[:4] != b'\x03\x00\x08\x00':
+            raise Exception("Not a valid Android Binary XML file")
+
+        decoded = manifest_data.decode('utf-16le', errors='ignore')
+        version_matches = re.findall(r'(\d+\.\d+\.\d+)', decoded)
+
+        # Filter for plausible PoGO versions (0.xxx.x pattern)
+        pogo_versions = [v for v in version_matches if v.startswith('0.') and int(v.split('.')[1]) >= 100]
+        if pogo_versions:
+            pogo_versions.sort(key=lambda x: [int(n) for n in x.split('.')], reverse=True)
+            return pogo_versions[0]
+
+        if version_matches:
+            version_matches.sort(key=lambda x: [int(n) for n in x.split('.')], reverse=True)
+            return version_matches[0]
+
+        raise Exception("No valid version found in AndroidManifest.xml")
+
+    except zipfile.BadZipFile:
+        raise Exception("File is not a valid ZIP/APKM archive")
+    except Exception as e:
+        log(f"Version extraction from APKM failed: {e}", None, "ERROR")
+        raise
+async def install_apk_for_device(device_id: str, apk_path: Path, apk_type: str = "google") -> bool:
+    """
+    Installs APK based on type - handles both Google (.apkm extracted) and Samsung (.apk direct)
+    
+    Args:
+        device_id: Device identifier
+        apk_path: Path to APK file (for Samsung) or extract directory (for Google)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
+    
+    Returns:
+        bool: True if installation successful
+    """
+    try:
+        device_id = format_device_id(device_id)
+        
+        if apk_type == "samsung":
+            # Samsung: Direct .apk file installation
+            if not apk_path.exists():
+                log(f"Samsung APK not found: {apk_path}", device_id, "ERROR")
+                return False
+            
+            log(f"Installing Samsung APK: {apk_path.name}", device_id, "UPDATE")
+            result = adb_pool.execute_command(
+                device_id,
+                ["adb", "install", "-r", str(apk_path)]
+            )
+            
+            if result.returncode != 0:
+                log(f"Samsung APK installation failed: {result.stderr}", device_id, "ERROR")
+                return False
+            
+            log("Samsung APK installed successfully", device_id, "UPDATE")
+            return True
+        
+        else:
+            # Google: Extracted .apkm folder installation
+            if not apk_path.exists():
+                log(f"Google extract directory not found: {apk_path}", device_id, "ERROR")
+                return False
+            
+            # Find all APK files in the extract directory
+            apk_files = list(apk_path.glob("*.apk"))
+            if not apk_files:
+                log(f"No APK files found in {apk_path}", device_id, "ERROR")
+                return False
+            
+            log(f"Installing {len(apk_files)} Google APK(s) from {apk_path.name}", device_id, "UPDATE")
+            
+            if len(apk_files) == 1:
+                # Single APK
+                result = adb_pool.execute_command(
+                    device_id,
+                    ["adb", "install", "-r", str(apk_files[0])]
+                )
+            else:
+                # Multiple APKs (split APK)
+                cmd = ["adb", "-s", device_id, "install-multiple", "-r"]
+                cmd.extend([str(f) for f in apk_files])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode != 0:
+                log(f"Google APK installation failed: {result.stderr}", device_id, "ERROR")
+                return False
+            
+            log("Google APK installed successfully", device_id, "UPDATE")
+            return True
+            
+    except Exception as e:
+        log(f"APK installation error: {str(e)}", device_id, "ERROR")
+        return False
+async def optimized_apk_installation(device_id: str, apk_files: list) -> tuple[bool, str]:
+    """
+    Optimized APK installation with improved error detection.
+    
+    Args:
+        device_id: Device identifier
+        apk_files: List of APK files to install
+        
+    Returns:
+        tuple: (success, error_message)
+    """
+    device_id = format_device_id(device_id)
+    
+    try:
+        log("Starting APK installation", device_id, "UPDATE")
+        
+        if not adb_pool.ensure_connected(device_id):
+            return False, "Cannot connect to device"
+            
+        # Single APK case - direct install
+        if len(apk_files) == 1:
+            log(f"Installing single APK: {apk_files[0].name}", device_id, "UPDATE")
+            result = adb_pool.execute_command(
+                device_id,
+                ["adb", "install", "-r", str(apk_files[0])]
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr
+                
+                # Detect specific error types
+                if "INSTALL_FAILED_INSUFFICIENT_STORAGE" in error_msg:
+                    log("Insufficient storage for APK installation", device_id, "ERROR")
+                    return False, "INSUFFICIENT_STORAGE"
+                elif "INSTALL_FAILED_ALREADY_EXISTS" in error_msg:
+                    return False, "ALREADY_EXISTS"
+                elif "INSTALL_FAILED_VERSION_DOWNGRADE" in error_msg:
+                    return False, "VERSION_DOWNGRADE"
+                else:
+                    log(f"APK installation failed: {error_msg}", device_id, "ERROR")
+                    return False, f"INSTALLATION_ERROR: {error_msg}"
+                    
+            log("APK installed successfully", device_id, "UPDATE")
+            return True, "SUCCESS"
+            
+        # Multiple APK case
+        log(f"Installing multiple APKs: {len(apk_files)} files", device_id, "UPDATE")
+        cmd = ["adb", "-s", device_id, "install-multiple", "-r"]
+        cmd.extend([str(f) for f in apk_files])
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            error_msg = result.stderr
+            
+            # Also detect specific error types for multiple APKs
+            if "INSTALL_FAILED_INSUFFICIENT_STORAGE" in error_msg:
+                log("Insufficient storage for APK installation", device_id, "ERROR")
+                return False, "INSUFFICIENT_STORAGE"
+            else:
+                log(f"Multiple APK installation failed: {error_msg}", device_id, "ERROR")
+                return False, f"INSTALLATION_ERROR: {error_msg}"
+                
+        log("Multiple APKs installed successfully", device_id, "UPDATE")
+        return True, "SUCCESS"
+            
+    except subprocess.TimeoutExpired:
+        log(f"APK installation timed out after 300 seconds", device_id, "ERROR")
+        return False, "TIMEOUT: install-multiple timed out after 300 seconds"
+    except Exception as e:
+        log(f"APK installation error: {str(e)}", device_id, "ERROR")
+        return False, f"EXCEPTION: {str(e)}"
+async def clear_app_cache(device_id: str) -> bool:
+    """
+    Clears Pokemon GO app cache to free up storage space.
+    
+    Args:
+        device_id: Device identifier
+        
+    Returns:
+        bool: True if cache clearing was successful
+    """
+    device_id = format_device_id(device_id)
+    
+    try:
+        log("Clearing Pokemon GO cache", device_id, "UPDATE")
+
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot connect for cache clearing", device_id, "ERROR")
+            return False
+        
+        # Clear app data and cache
+        pogo_package = get_device_package_name(device_id)
+        clear_cmd = f"pm clear {pogo_package}"
+        result = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", clear_cmd]
+        )
+        
+        if "Success" in result.stdout:
+            log("Successfully cleared Pokemon GO cache", device_id, "UPDATE")
+            return True
+        else:
+            log(f"Failed to clear Pokemon GO cache: {result.stderr}", device_id, "ERROR")
+            return False
+            
+    except Exception as e:
+        log(f"Error clearing cache: {str(e)}", device_id, "ERROR")
+        return False
+async def uninstall_pogo(device_id: str) -> bool:
+    """
+    Uninstalls Pokemon GO to free up storage for new installation.
+    
+    Args:
+        device_id: Device identifier
+        
+    Returns:
+        bool: True if uninstallation was successful
+    """
+    device_id = format_device_id(device_id)
+    
+    try:
+        log("Uninstalling Pokemon GO", device_id, "UPDATE")
+
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot connect for uninstallation", device_id, "ERROR")
+            return False
+        
+        # Uninstall the app
+        pogo_package = get_device_package_name(device_id)
+        uninstall_cmd = f"pm uninstall {pogo_package}"
+        result = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", uninstall_cmd]
+        )
+        
+        if "Success" in result.stdout:
+            log("Successfully uninstalled Pokemon GO", device_id, "UPDATE")
+            return True
+        else:
+            log(f"Failed to uninstall Pokemon GO: {result.stderr}", device_id, "ERROR")
+            return False
+            
+    except Exception as e:
+        log(f"Error uninstalling app: {str(e)}", device_id, "ERROR")
+        return False
+async def reclaim_storage(device_id: str) -> bool:
+    """Reclaims storage after uninstall by trimming caches and filesystem."""
+    device_id = format_device_id(device_id)
+    try:
+        log("Reclaiming storage via trim-caches and fstrim", device_id, "UPDATE")
+
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot connect for storage reclaim", device_id, "ERROR")
+            return False
+
+        # Trim package manager caches (free up to 1GB)
+        adb_pool.execute_command(device_id, ["adb", "shell", "pm trim-caches 1073741824"])
+
+        # Filesystem TRIM to reclaim deleted blocks on flash storage
+        adb_pool.execute_command(device_id, ["adb", "shell", "sm fstrim"])
+
+        # Brief wait for operations to complete
+        await asyncio.sleep(5)
+
+        log("Storage reclaim completed", device_id, "UPDATE")
+        return True
+    except Exception as e:
+        log(f"Error reclaiming storage: {str(e)}", device_id, "ERROR")
+        return False
+async def reboot_and_wait(device_id: str) -> bool:
+    """Reboots device to reclaim storage after uninstall, waits for reconnect."""
+    device_id = format_device_id(device_id)
+    try:
+        log("Rebooting device to reclaim storage", device_id, "UPDATE")
+        adb_pool.execute_command(device_id, ["adb", "reboot"])
+
+        # Invalidate ADB connection cache so ensure_connected actually checks
+        with adb_pool.connection_lock:
+            adb_pool.connected_devices.discard(device_id)
+            adb_pool.last_command_time.pop(device_id, None)
+
+        # Wait for device to come back online (max 5 minutes)
+        for i in range(30):
+            await asyncio.sleep(10)
+            try:
+                if adb_pool.ensure_connected(device_id):
+                    log("Device back online after reboot, waiting for boot completion", device_id, "UPDATE")
+                    for _ in range(24):  # max 120s
+                        try:
+                            result = adb_pool.execute_command(
+                                device_id,
+                                ["adb", "shell", "getprop", "sys.boot_completed"],
+                                timeout=5
+                            )
+                            if result.stdout.strip() == "1":
+                                log("Device boot completed", device_id, "UPDATE")
+                                await asyncio.sleep(5)
+                                return True
+                        except Exception:
+                            pass
+                        await asyncio.sleep(5)
+                    log("Boot completion not confirmed, proceeding anyway", device_id, "UPDATE")
+                    return True
+            except Exception:
+                continue
+
+        log("Device did not come back online after reboot", device_id, "ERROR")
+        return False
+    except Exception as e:
+        log(f"Error during reboot: {str(e)}", device_id, "ERROR")
+        return False
+async def optimized_perform_installation(device_ip: str, apk_path: Path, apk_type: str = "google") -> bool:
+    """
+    Optimized version of the full installation process with
+    staged approach for handling storage issues.
+    
+    Args:
+        device_ip: Device identifier
+        apk_path: Directory containing extracted APK files (Google) or path to .apk file (Samsung)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
+        
+    Returns:
+        bool: True if the complete process was successful
+    """
+    try:
+        # Mark device as in update
+        mark_device_in_update(device_ip, "pogo")
+        update_progress(10)
+
+        # Broadcast immediately so UI shows spinner
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+
+        device_details = get_device_details(device_ip)
+        device_name = device_details.get("display_name", device_ip.split(":")[0])
+
+        # Wait for device to be online before attempting installation (max 3 minutes)
+        device_ip_formatted = format_device_id(device_ip)
+        if not adb_pool.ensure_connected(device_ip_formatted):
+            log("Device not online, waiting for it to come online before installation", device_ip, "UPDATE")
+            device_online = False
+            for i in range(18):  # max 3 minutes (18 * 10s)
+                await asyncio.sleep(10)
+                try:
+                    if adb_pool.ensure_connected(device_ip_formatted):
+                        log(f"Device came online after {(i + 1) * 10}s", device_ip, "UPDATE")
+                        device_online = True
+                        break
+                except Exception:
+                    continue
+            if not device_online:
+                log("Device did not come online within 3 minutes, aborting installation", device_ip, "ERROR")
+                add_discord_event(f"Install aborted — {device_name} offline")
+                await update_discord_status_embed()
+                clear_device_update_status(device_ip)
+                return False
+
+        # Validate APK path based on type
+        if apk_type == "samsung":
+            # Samsung: direct .apk file
+            if not apk_path.exists() or not apk_path.is_file():
+                log(f"Samsung APK file not found: {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
+        else:
+            # Google: extracted folder
+            if not apk_path.exists() or not apk_path.is_dir():
+                log(f"Google extract directory not found: {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
+            
+            apk_files = list(apk_path.glob("*.apk"))
+            if not apk_files:
+                log(f"No APK files found in {apk_path}", device_ip, "ERROR")
+                clear_device_update_status(device_ip)
+                return False
+            
+        update_progress(20)
+        
+        # Extract version from path
+        version = apk_path.stem if apk_type == "samsung" else apk_path.name
+        
+        # Get APK files for Google type
+        apk_files = list(apk_path.glob("*.apk")) if apk_type == "google" else [apk_path]
+        
+        # Try installation with progressive recovery strategies
+        strategies = [
+            ("normal", None, 60),
+            ("cache_clear", clear_app_cache, 50),
+            ("uninstall_reinstall", uninstall_pogo, 55),
+            ("storage_reclaim", reclaim_storage, 55),
+            ("reboot_reinstall", reboot_and_wait, 55)
+        ]
+        
+        installation_success = False
+        error_msg = ""
+        
+        for strategy_name, recovery_action, progress_target in strategies:
+            log(f"Attempting {strategy_name} installation ({apk_type})", device_ip, "UPDATE")
+            
+            # Execute recovery action if needed
+            if recovery_action:
+                if strategy_name == "cache_clear":
+                    add_discord_event(f"{device_name} — clearing cache, retrying install")
+                    await update_discord_status_embed()
+                    update_progress(30)
+                    recovery_success = await recovery_action(device_ip)
+                    update_progress(40)
+                elif strategy_name == "uninstall_reinstall":
+                    add_discord_event(f"{device_name} — uninstalling & reinstalling PoGo")
+                    await update_discord_status_embed()
+                    update_progress(40)
+                    recovery_success = await recovery_action(device_ip)
+                    update_progress(45)
+                elif strategy_name == "storage_reclaim":
+                    add_discord_event(f"{device_name} — reclaiming storage")
+                    await update_discord_status_embed()
+                    update_progress(40)
+                    recovery_success = await recovery_action(device_ip)
+                    update_progress(50)
+                elif strategy_name == "reboot_reinstall":
+                    add_discord_event(f"{device_name} — rebooting for install")
+                    await update_discord_status_embed()
+                    update_progress(40)
+                    recovery_success = await recovery_action(device_ip)
+                    update_progress(50)
+
+                if not recovery_success:
+                    log(f"Recovery action {strategy_name} failed", device_ip, "ERROR")
+                    continue
+            
+            # Try installation using the appropriate method
+            if apk_type == "samsung":
+                # Samsung: use new install_apk_for_device function
+                installation_success = await install_apk_for_device(device_ip, apk_path, "samsung")
+                error_msg = "SUCCESS" if installation_success else "INSTALLATION_ERROR"
+            else:
+                # Google: use existing optimized_apk_installation
+                installation_success, error_msg = await optimized_apk_installation(device_ip, apk_files)
+            
+            update_progress(progress_target)
+            
+            if installation_success:
+                log(f"{strategy_name.title()} installation successful", device_ip, "UPDATE")
+                break
+            elif error_msg.startswith("TIMEOUT:") or "timed out" in error_msg.lower():
+                # ADB command timed out - device is stuck, continue to next strategy (reboot)
+                log(f"Installation timed out, trying next recovery strategy: {error_msg}", device_ip, "UPDATE")
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
+                continue
+            elif "offline" in error_msg.lower() or "not connected" in error_msg.lower() or "Cannot connect" in error_msg:
+                # Device connectivity error - wait and retry with next strategy
+                log(f"Device appears offline, waiting before next attempt: {error_msg}", device_ip, "UPDATE")
+                await asyncio.sleep(15)
+                # Invalidate ADB cache so next attempt does a real check
+                device_ip_formatted = format_device_id(device_ip)
+                with adb_pool.connection_lock:
+                    adb_pool.connected_devices.discard(device_ip_formatted)
+                    adb_pool.last_command_time.pop(device_ip_formatted, None)
+                continue
+            elif error_msg != "INSUFFICIENT_STORAGE":
+                # Non-storage error, don't continue with other strategies
+                log(f"Installation failed with non-storage error: {error_msg}", device_ip, "ERROR")
+                break
+        
+        # Handle final failure
+        if not installation_success:
+            add_discord_event(f"Install failed on {device_name}")
+            await update_discord_status_embed()
+            clear_device_update_status(device_ip)
+            return False
+        
+        # Proceed with starting the app if any stage succeeded
+        if installation_success:
+            # Determine if app control is enabled
+            config = load_config()
+            device = next((d for d in config["devices"] if d["ip"] == device_ip), None)
+            control_enabled = device and device.get("control_enabled", False)
+            
+            update_progress(70)
+            
+            # Start app
+            log(f"Starting app after update (Control: {control_enabled})", device_ip, "UPDATE")
+            start_result = await optimized_app_start(device_ip, control_enabled)
+            
+            if start_result:
+                log("App started after update", device_ip, "UPDATE")
+                # Send success notification
+                await notify_update_installed(device_name, device_ip, "Pokemon GO", version)
+            else:
+                log("Failed to start app after update", device_ip, "ERROR")
+                add_discord_event(f"PoGo {version} installed on {device_name} but app failed to start")
+                await update_discord_status_embed()
+                
+            update_progress(90)
+
+            # Clear update status BEFORE refreshing version info,
+            # otherwise get_version_info() skips refresh for devices marked as in_update
+            clear_device_update_status(device_ip)
+
+            # Clear caches and refresh version
+            device_status_cache.clear()
+            version_manager.mark_for_refresh(device_ip)
+
+            update_progress(100)
+
+            # Update UI
+            status_data = await get_status_data()
+            await ws_manager.broadcast(status_data)
+
+            await asyncio.sleep(2)
+            return start_result
+
+        # This point should not be reached if everything worked correctly
+        clear_device_update_status(device_ip)
+        return False
+            
+    except Exception as e:
+        log(f"Installation process error: {str(e)}", device_ip, "ERROR")
+        # Notify of general errors
+        try:
+            device_details = get_device_details(device_ip)
+            device_name = device_details.get("display_name", device_ip.split(":")[0])
+            add_discord_event(f"Update failed on {device_name}")
+            await update_discord_status_embed()
+        except:
+            pass
+        return False
+    finally:
+        # Always clear update status
+        clear_device_update_status(device_ip)
+async def run_device_setup(setup_id: str, device_id: str, start_step: str = "adb_connect"):
+    """Runs the device setup pipeline after adding a new device."""
+    task = device_setup_tasks[setup_id]
+
+    steps = ["adb_connect", "version_check", "pogo_setup", "mapworld_setup", "done"]
+    step_labels = {
+        "adb_connect": "Checking ADB connection...",
+        "version_check": "Reading installed versions...",
+        "pogo_setup": "Checking Pokemon GO...",
+        "mapworld_setup": "Checking MapWorld...",
+        "done": "Setup complete"
+    }
+
+    start_index = steps.index(start_step) if start_step in steps else 0
+    loop = asyncio.get_event_loop()
+
+    try:
+        # --- Step: adb_connect ---
+        if start_index <= 0:
+            task.update({"step": "adb_connect", "step_label": step_labels["adb_connect"], "progress": 5})
+
+            # Clear TTL cache for this device so we get a fresh check
+            check_adb_connection.cache_clear()
+
+            is_connected, error_msg = await loop.run_in_executor(None, check_adb_connection, device_id)
+
+            if not is_connected:
+                if "authenticat" in (error_msg or "").lower() or "unauthorized" in (error_msg or "").lower():
+                    task.update({"progress": 10, "needs_auth": True, "step_label": "ADB authorization required"})
+                    return  # Pipeline paused, waiting for auth retry
+                else:
+                    task.update({"progress": 10, "error": f"ADB connection failed: {error_msg}", "completed": True})
+                    return
+
+            task.update({"progress": 15})
+
+        # --- Step: version_check ---
+        if start_index <= 1:
+            task.update({"step": "version_check", "step_label": step_labels["version_check"], "progress": 20})
+
+            try:
+                version_info = await loop.run_in_executor(
+                    None, version_manager.get_version_info, device_id, True
+                )
+                pogo_installed = version_info.get("pogo_version", "N/A") if version_info else "N/A"
+                mitm_installed = version_info.get("mitm_version", "N/A") if version_info else "N/A"
+            except Exception as e:
+                log(f"Version check error during setup: {e}", device_id, "ERROR")
+                pogo_installed = "N/A"
+                mitm_installed = "N/A"
+
+            task["results"]["installed_pogo"] = pogo_installed
+            task["results"]["installed_mitm"] = mitm_installed
+            task.update({"progress": 30})
+
+        # --- Step: pogo_setup ---
+        if start_index <= 2:
+            task.update({"step": "pogo_setup", "step_label": step_labels["pogo_setup"], "progress": 35})
+
+            try:
+                # Get available versions from mirror
+                task.update({"step_label": "Fetching available PoGo versions..."})
+                versions = await loop.run_in_executor(None, get_available_versions)
+                latest_info = versions.get("latest", {})
+
+                if not latest_info:
+                    task["results"]["pogo"] = "Could not fetch version info from mirror"
+                else:
+                    latest_version = latest_info.get("version", "N/A")
+                    pogo_installed = task["results"].get("installed_pogo", "N/A")
+
+                    if pogo_installed == latest_version:
+                        task["results"]["pogo"] = f"Already up to date (v{pogo_installed})"
+                    else:
+                        # Need to download/install
+                        target_file = APK_DIR / latest_info["filename"]
+                        if not target_file.exists():
+                            task.update({"step_label": f"Downloading PoGo v{latest_version}...", "progress": 40})
+                            APK_DIR.mkdir(parents=True, exist_ok=True)
+                            await loop.run_in_executor(None, download_apk, latest_info)
+
+                        task.update({"step_label": f"Extracting PoGo v{latest_version}...", "progress": 50})
+                        extract_path = EXTRACT_DIR / latest_version
+                        await loop.run_in_executor(None, unzip_apk, target_file, extract_path)
+
+                        task.update({"step_label": f"Installing PoGo v{latest_version}...", "progress": 55})
+                        install_success = await optimized_perform_installation(device_id, extract_path)
+
+                        if install_success:
+                            task["results"]["pogo"] = f"Installed v{latest_version}"
+                        else:
+                            task["results"]["pogo"] = f"Installation failed for v{latest_version}"
+
+            except Exception as e:
+                log(f"PoGo setup error during device setup: {e}", device_id, "ERROR")
+                task["results"]["pogo"] = f"Error: {str(e)}"
+
+            task.update({"progress": 70})
+
+        # --- Step: mapworld_setup ---
+        if start_index <= 3:
+            task.update({"step": "mapworld_setup", "step_label": step_labels["mapworld_setup"], "progress": 72})
+
+            try:
+                updater = MapWorldUpdater()
+                current_apk = updater.get_current_apk_path()
+
+                if not current_apk or not current_apk.exists():
+                    # Need to download MapWorld first
+                    task.update({"step_label": "Downloading MapWorld...", "progress": 75})
+                    dl_success, dl_path = await updater.download_mapworld()
+
+                    if not dl_success:
+                        task["results"]["mapworld"] = "Download failed"
+                    else:
+                        task.update({"step_label": "Installing MapWorld...", "progress": 85})
+                        install_success = await updater.install_mapworld(device_id, force_install=True)
+                        if install_success:
+                            task["results"]["mapworld"] = "Installed successfully"
+                        else:
+                            task["results"]["mapworld"] = "Installation failed"
+                else:
+                    # APK exists, check if device needs it
+                    task.update({"step_label": "Checking MapWorld version...", "progress": 78})
+                    version_name, _ = updater.extract_apk_version(current_apk)
+                    should_update, reason = await updater.should_update_device(device_id, version_name)
+
+                    if not should_update:
+                        task["results"]["mapworld"] = f"Already up to date (v{version_name})"
+                    else:
+                        task.update({"step_label": f"Installing MapWorld v{version_name}...", "progress": 85})
+                        install_success = await updater.install_mapworld(device_id, force_install=True)
+                        if install_success:
+                            task["results"]["mapworld"] = f"Installed v{version_name}"
+                        else:
+                            task["results"]["mapworld"] = "Installation failed"
+
+            except Exception as e:
+                log(f"MapWorld setup error during device setup: {e}", device_id, "ERROR")
+                task["results"]["mapworld"] = f"Error: {str(e)}"
+
+            task.update({"progress": 95})
+
+        # --- Step: done ---
+        task.update({
+            "step": "done",
+            "step_label": step_labels["done"],
+            "progress": 100,
+            "completed": True
+        })
+        version_manager.mark_for_refresh(device_id)
+
+    except Exception as e:
+        log(f"Device setup pipeline error: {e}", device_id, "ERROR")
+        task.update({"error": f"Unexpected error: {str(e)}", "completed": True})
+async def run_device_setup_from_step(setup_id: str, device_id: str, start_step: str):
+    """Wrapper to restart setup pipeline from a specific step (used for auth retry)."""
+    await run_device_setup(setup_id, device_id, start_step=start_step)
+async def optimized_pogo_update_task():
+    """Automatic PoGO update check and installation on devices with reduced version queries"""
+    import random
+    
+    while True:
+        try:
+            config = load_config()
+            
+            log("Checking for PoGO updates...", None, "UPDATE")
+            
+            # Get versions and download latest version
+            get_available_versions.cache_clear()
+            versions = get_available_versions()
+            
+            if not versions.get("latest"):
+                log("No valid PoGO version available, skipping check", None, "UPDATE")
+                await asyncio.sleep(3 * 3600)
+                continue
+                
+            latest_version = versions["latest"]["version"]
+            log(f"Latest available PoGO version: {latest_version}", None, "VERSION")
+            
+            # Always download latest version
+            ensure_latest_apk_downloaded()
+            
+            # Check if auto updates are enabled
+            if not config.get("pogo_auto_update_enabled", True):
+                log("PoGO auto-update disabled, updates downloaded but not installed", None, "UPDATE")
+                await asyncio.sleep(3 * 3600)
+                continue
+            
+            # Prepare APK
+            apk_file = APK_DIR / versions["latest"]["filename"]
+            version_extract_dir = EXTRACT_DIR / latest_version
+            unzip_apk(apk_file, version_extract_dir)
+            
+            # Get config device IPs for filtering
+            config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
+            
+            # Find devices needing update - OPTIMIZED: Uses VersionManager
+            devices_to_update = version_manager.get_devices_needing_pogo_update(latest_version)
+            
+            # Filter devices not in config
+            devices_to_update = [dev for dev in devices_to_update if dev in config_device_ips]
+            
+            update_count = len(devices_to_update)
+            if update_count > 0:
+                log(f"Installing PoGO {latest_version} on {update_count} devices", None, "UPDATE")
+                
+                # Process each device
+                for device_id in devices_to_update:
+                    await optimized_perform_installation(device_id, version_extract_dir)
+                    # Mark device for version refresh
+                    version_manager.mark_for_refresh(device_id)
+                
+                log("PoGO automatic update complete", None, "UPDATE")
+                
+                status_data = await get_status_data()
+                await ws_manager.broadcast(status_data)
+            else:
+                log("All devices already have latest version, no updates needed", None, "UPDATE")
+            
+        except Exception as e:
+            log(f"PoGO Auto-Update Error: {str(e)}", None, "ERROR")
+            import traceback
+            traceback.print_exc()
+            
+        await asyncio.sleep(3 * 3600)
+@dataclass
+class MapWorldConfig:
+    download_url: str = "https://protomines.ddns.net/apk/MapWorld-release.zip"
+    apk_dir: Path = BASE_DIR / "data" / "apks"
+    apk_base_name: str = "mapworld"
+    package_name: str = "com.github.furtif.furtifformaps"  # Adjust to actual MapWorld package
+    cache_file: Path = BASE_DIR / "data" / "mapworld_metadata_cache"
+    etag_file: Path = BASE_DIR / "data" / "mapworld_last_etag"
+    check_interval_hours: int = 1
+    download_timeout: int = 300
+    metadata_timeout: int = 10
+    max_retries: int = 3
+    cache_ttl_minutes: int = 30
+    keep_previous_versions: int = 3  # Number of previous versions to keep
+class MapWorldUpdater:
+    """Optimized class for MapWorld updates with version management and better error handling"""
+    
+    def __init__(self, config: MapWorldConfig = None):
+        self.config = config or MapWorldConfig()
+        self._metadata_cache = {}
+        self._cache_timestamp = 0
+        
+        # Ensure APK directory exists
+        self.config.apk_dir.mkdir(parents=True, exist_ok=True)
+    
+    def extract_apk_version(self, apk_path: Path, debug: bool = False) -> Tuple[str, str]:
+        """Extracts version name and code from APK using Android Binary XML UTF-16 parsing"""
+    
+        try:
+            with zipfile.ZipFile(apk_path, 'r') as zip_file:
+                manifest_data = zip_file.read('AndroidManifest.xml')
+            
+                if debug:
+                    log(f"DEBUG: AndroidManifest.xml size: {len(manifest_data)} bytes", None, "INFO")
+            
+                # Check for Android Binary XML magic bytes
+                if len(manifest_data) < 4 or manifest_data[:4] != b'\x03\x00\x08\x00':
+                    raise Exception("Not a valid Android Binary XML file")
+            
+                if debug:
+                    log("DEBUG: Detected Android Binary XML format", None, "INFO")
+            
+                # UTF-16LE decoding (proven method from debugger)
+                try:
+                    decoded = manifest_data.decode('utf-16le', errors='ignore')
+                    version_matches = re.findall(r'(\d+\.\d+(?:\.\d+)?)', decoded)
+                
+                    if debug:
+                        log(f"DEBUG: UTF-16LE found versions: {version_matches}", None, "INFO")
+                
+                    # Filter for valid versions and select the best one
+                    valid_versions = [v for v in version_matches if self._is_valid_version(v)]
+                
+                    if valid_versions:
+                        # Remove duplicates and sort by version number (highest first)
+                        unique_versions = list(set(valid_versions))
+                        unique_versions.sort(key=lambda x: [int(p) for p in x.split('.')], reverse=True)
+                    
+                        best_version = unique_versions[0]
+                        if debug:
+                            log(f"DEBUG: Selected version {best_version} from UTF-16LE decoding", None, "INFO")
+                    
+                        return best_version, "0"
+                
+                except Exception as e:
+                    if debug:
+                        log(f"DEBUG: UTF-16LE decoding failed: {e}", None, "DEBUG")
+                    raise Exception("UTF-16LE decoding failed")
+        
+            # If we get here, the method failed
+            raise Exception("No valid version found in AndroidManifest.xml")
+        
+        except Exception as e:
+            log(f"Version extraction failed for {apk_path}: {e}", None, "ERROR")
+            return "unknown", "0"
+
+    def _is_valid_version(self, version: str) -> bool:
+        """Checks if a version number makes sense - extended validation"""
+        try:
+            # Basic validation
+            if not version or len(version.split('.')) > 4:
+                return False
+            
+            # Check if it has numeric parts
+            parts = version.split('.')
+            for part in parts:
+                if not part.isdigit():
+                    return False
+                if int(part) > 999:  # Unrealistic version number
+                    return False
+            
+            # Special validation for modern apps
+            if len(parts) >= 2:
+                major, minor = int(parts[0]), int(parts[1])
+                
+                # Modern MapWorld versions should be >= 2.0
+                # 1.x versions are probably wrong
+                if major == 1 and minor <= 20:
+                    log(f"Rejecting suspicious version {version} (likely too old)", None, "DEBUG")
+                    return False
+                
+                # Realistic version ranges
+                if 0 <= major <= 10 and 0 <= minor <= 99:
+                    return True
+            
+            return False
+        except:
+            return False
+    
+    def get_versioned_filename(self, version_name: str, version_code: str) -> str:
+        """Generates versioned filename"""
+        # Clean version name for filename
+        clean_version = "".join(c for c in version_name if c.isalnum() or c in ".-_")
+        return f"{self.config.apk_base_name}_v{clean_version}_{version_code}.apk"
+    
+    def get_current_apk_path(self) -> Optional[Path]:
+        """Finds the most current APK file"""
+        apk_files = list(self.config.apk_dir.glob(f"{self.config.apk_base_name}_v*.apk"))
+        if not apk_files:
+            return None
+        
+        # Sort by modification date (newest first)
+        apk_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        return apk_files[0]
+    
+    def get_all_apk_versions(self) -> list[Tuple[Path, str, str]]:
+        """Returns all available APK versions, sorted by date"""
+        apk_files = list(self.config.apk_dir.glob(f"{self.config.apk_base_name}_v*.apk"))
+        versions = []
+        
+        for apk_path in apk_files:
+            try:
+                version_name, version_code = self.extract_apk_version(apk_path)
+                versions.append((apk_path, version_name, version_code))
+            except Exception as e:
+                log(f"Could not read version from {apk_path}: {e}", None, "WARNING")
+        
+        # Sort by modification date (newest first)
+        versions.sort(key=lambda x: x[0].stat().st_mtime, reverse=True)
+        return versions
+    
+    def cleanup_old_versions(self):
+        """Removes old APK versions, keeps only the newest ones"""
+        versions = self.get_all_apk_versions()
+        
+        if len(versions) <= self.config.keep_previous_versions + 1:
+            return  # Nothing to clean up
+        
+        # Keep the newest (keep_previous_versions + 1) versions
+        to_keep = versions[:self.config.keep_previous_versions + 1]
+        to_remove = versions[self.config.keep_previous_versions + 1:]
+        
+        for apk_path, version_name, version_code in to_remove:
+            try:
+                apk_path.unlink()
+                log(f"Removed old version: {apk_path.name} (v{version_name})", None, "INFO")
+            except Exception as e:
+                log(f"Error removing old APK {apk_path}: {e}", None, "ERROR")
+    
+    def backup_current_version(self) -> Optional[Path]:
+        """Creates backup of current version before downloading new one"""
+        current_apk = self.get_current_apk_path()
+        if not current_apk or not current_apk.exists():
+            return None
+        
+        try:
+            # Create backup with _backup suffix
+            backup_name = current_apk.stem + "_backup" + current_apk.suffix
+            backup_path = current_apk.parent / backup_name
+            
+            shutil.copy2(current_apk, backup_path)
+            log(f"Created backup: {backup_path.name}", None, "INFO")
+            return backup_path
+        except Exception as e:
+            log(f"Error creating backup: {e}", None, "ERROR")
+            return None
+
+    async def get_remote_metadata(self) -> Dict:
+        """Cached metadata retrieval with exponential backoff"""
+        now = datetime.datetime.now().timestamp()
+        cache_valid_until = self._cache_timestamp + (self.config.cache_ttl_minutes * 60)
+        
+        # Return cached data if still valid
+        if self._metadata_cache and now < cache_valid_until:
+            log("Using cached metadata", None, "DEBUG")
+            return self._metadata_cache
+        
+        for attempt in range(self.config.max_retries):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.head(
+                        self.config.download_url, 
+                        timeout=self.config.metadata_timeout
+                    )
+                    
+                    if response.status_code == 200:
+                        metadata = {
+                            "last_modified": response.headers.get("last-modified", ""),
+                            "content_length": response.headers.get("content-length", ""),
+                            "etag": response.headers.get("etag", "")
+                        }
+                        
+                        # Cache successful result
+                        self._metadata_cache = metadata
+                        self._cache_timestamp = now
+                        log("Successfully retrieved and cached metadata", None, "INFO")
+                        return metadata
+                    else:
+                        log(f"HTTP {response.status_code} when fetching metadata", None, "WARNING")
+                        
+            except httpx.TimeoutException:
+                log(f"Timeout on attempt {attempt + 1}/{self.config.max_retries}", None, "WARNING")
+            except httpx.RequestError as e:
+                log(f"Request error on attempt {attempt + 1}: {e}", None, "ERROR")
+            except Exception as e:
+                log(f"Unexpected error on attempt {attempt + 1}: {e}", None, "ERROR")
+            
+            if attempt < self.config.max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                log(f"Retrying in {wait_time} seconds...", None, "INFO")
+                await asyncio.sleep(wait_time)
+        
+        log("Failed to retrieve metadata after all retries", None, "ERROR")
+        return {}
+
+    def _parse_last_modified(self, last_modified_str: str) -> Optional[float]:
+        """Robust parsing of Last-Modified header"""
+        if not last_modified_str:
+            return None
+            
+        # Support various date formats
+        formats = [
+            "%a, %d %b %Y %H:%M:%S %Z",
+            "%a, %d %b %Y %H:%M:%S GMT",
+            "%a, %d-%b-%Y %H:%M:%S %Z"
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.datetime.strptime(last_modified_str, fmt).timestamp()
+            except ValueError:
+                continue
+        
+        log(f"Could not parse last-modified header: {last_modified_str}", None, "WARNING")
+        return None
+
+    async def has_update_available(self) -> Tuple[bool, str]:
+        """Improved update check with detailed feedback"""
+        current_apk = self.get_current_apk_path()
+        
+        if not current_apk or not current_apk.exists():
+            return True, "No local APK file exists"
+
+        try:
+            remote_meta = await self.get_remote_metadata()
+            if not remote_meta:
+                return False, "Could not retrieve remote metadata"
+
+            # ETag-based comparison: compare stored remote ETag vs current remote ETag
+            if remote_meta.get("etag"):
+                remote_etag = remote_meta["etag"].strip('"')
+                stored_etag = self._load_stored_etag()
+                if stored_etag and stored_etag == remote_etag:
+                    return False, "No updates available (ETag unchanged)"
+                if stored_etag:
+                    return True, f"ETag mismatch: stored={stored_etag}, remote={remote_etag}"
+
+            # Fallback to timestamp and size comparison
+            remote_modified_str = remote_meta.get("last_modified")
+            if remote_modified_str:
+                remote_modified = self._parse_last_modified(remote_modified_str)
+                if remote_modified:
+                    local_modified = current_apk.stat().st_mtime
+                    if remote_modified > local_modified:
+                        return True, f"Remote file is newer: {datetime.datetime.fromtimestamp(remote_modified)}"
+
+            # Size comparison
+            content_length = remote_meta.get("content_length")
+            if content_length and content_length.isdigit():
+                remote_size = int(content_length)
+                local_size = current_apk.stat().st_size
+                if remote_size != local_size:
+                    return True, f"Size mismatch: local={local_size}, remote={remote_size}"
+
+            return False, "No updates available"
+
+        except Exception as e:
+            log(f"Error checking for updates: {e}", None, "ERROR")
+            return False, f"Error during update check: {str(e)}"
+
+    def _load_stored_etag(self) -> str:
+        """Loads the remote ETag stored after the last successful download"""
+        try:
+            if self.config.etag_file.exists():
+                return self.config.etag_file.read_text().strip()
+        except Exception:
+            pass
+        return ""
+
+    def _save_stored_etag(self, etag: str):
+        """Saves the remote ETag after a successful download"""
+        try:
+            self.config.etag_file.parent.mkdir(parents=True, exist_ok=True)
+            self.config.etag_file.write_text(etag)
+        except Exception as e:
+            log(f"Could not save ETag: {e}", None, "WARNING")
+
+    async def download_mapworld(self, progress_callback=None, force_version: str = None) -> Tuple[bool, Optional[Path]]:
+        """Async download with improved version detection"""
+        try:
+            # Backup current version if exists
+            backup_path = self.backup_current_version()
+            
+            # Ensure parent directory exists
+            self.config.apk_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Download to temporary file first
+            temp_path = self.config.apk_dir / f"{self.config.apk_base_name}_temp_download.apk"
+            
+            # Try to extract version from URL or response headers first
+            download_version = force_version
+            
+            async with httpx.AsyncClient() as client:
+                # First, get headers to check for version hints
+                if not download_version:
+                    try:
+                        head_response = await client.head(self.config.download_url)
+                        content_disposition = head_response.headers.get('content-disposition', '')
+                        if 'filename=' in content_disposition:
+                            suggested_filename = content_disposition.split('filename=')[1].strip('"\'')
+                            log(f"Server suggested filename: {suggested_filename}", None, "DEBUG")
+                            
+                            # Try to extract version from suggested filename
+                            version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', suggested_filename)
+                            if version_match and self._is_valid_version(version_match.group(1)):
+                                download_version = version_match.group(1)
+                                log(f"Found version in server filename: {download_version}", None, "INFO")
+                    except Exception as e:
+                        log(f"Could not get version from headers: {e}", None, "DEBUG")
+                
+                # Download the file
+                download_etag = None
+                async with client.stream(
+                    "GET",
+                    self.config.download_url,
+                    timeout=self.config.download_timeout
+                ) as response:
+                    response.raise_for_status()
+                    download_etag = response.headers.get("etag", "").strip('"') or None
+
+                    total_size = int(response.headers.get("content-length", 0))
+                    downloaded = 0
+
+                    with open(temp_path, "wb") as f:
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            if progress_callback and total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                await progress_callback(progress)
+
+            # Check if downloaded file is a ZIP containing an APK (e.g. MapWorld-release.zip)
+            if zipfile.is_zipfile(temp_path):
+                try:
+                    with zipfile.ZipFile(temp_path, 'r') as zf:
+                        apk_files = [f for f in zf.namelist() if f.lower().endswith('.apk')]
+                        if apk_files:
+                            apk_name = apk_files[0]
+                            log(f"Downloaded file is a ZIP archive, extracting APK: {apk_name}", None, "INFO")
+                            extracted_apk_path = self.config.apk_dir / f"{self.config.apk_base_name}_temp_extracted.apk"
+                            with zf.open(apk_name) as src, open(extracted_apk_path, 'wb') as dst:
+                                shutil.copyfileobj(src, dst)
+                            temp_path.unlink()
+                            extracted_apk_path.replace(temp_path)
+                            log(f"Successfully extracted APK from ZIP ({temp_path.stat().st_size} bytes)", None, "INFO")
+                except zipfile.BadZipFile:
+                    log("Downloaded file appears corrupt, continuing with raw file", None, "WARNING")
+
+            # Extract version information from downloaded APK
+            if not download_version:
+                version_name, version_code = self.extract_apk_version(temp_path)
+            else:
+                version_name = download_version
+                version_code = "0"
+                log(f"Using provided version: {version_name}", None, "INFO")
+            
+            # If we still don't have a good version, try to get it from the APK content
+            if not self._is_valid_version(version_name):
+                log(f"Invalid version '{version_name}', attempting deeper analysis...", None, "WARNING")
+                
+                # Try to extract from APK content more aggressively
+                try:
+                    extracted_version = await self._deep_version_analysis(temp_path)
+                    if extracted_version and self._is_valid_version(extracted_version):
+                        version_name = extracted_version
+                        log(f"Deep analysis found version: {version_name}", None, "INFO")
+                except Exception as e:
+                    log(f"Deep analysis failed: {e}", None, "DEBUG")
+            
+            # If we still don't have a valid version, ask user or use current date
+            if not self._is_valid_version(version_name):
+                # Check if there's a pattern in the download URL
+                url_version = re.search(r'(\d+\.\d+(?:\.\d+)?)', self.config.download_url)
+                if url_version and self._is_valid_version(url_version.group(1)):
+                    version_name = url_version.group(1)
+                    log(f"Found version in download URL: {version_name}", None, "INFO")
+                else:
+                    # Use today's date as fallback (better than timestamp)
+                    today = datetime.datetime.now()
+                    version_name = f"{today.year % 100}.{today.month}.{today.day}"  # 25.8.3 format
+                    log(f"Using date-based version: {version_name}", None, "WARNING")
+            
+            log(f"Final determined version: {version_name} (code: {version_code})", None, "INFO")
+            
+            # Generate versioned filename
+            versioned_filename = self.get_versioned_filename(version_name, version_code)
+            final_path = self.config.apk_dir / versioned_filename
+            
+            # Check if this exact version already exists
+            if final_path.exists():
+                log(f"Version {version_name} already exists, checking if different...", None, "WARNING")
+                
+                # Compare file sizes to see if it's actually different
+                existing_size = final_path.stat().st_size
+                new_size = temp_path.stat().st_size
+                
+                if abs(existing_size - new_size) < 1024:  # Less than 1KB difference
+                    log(f"Same version and size, keeping existing file", None, "INFO")
+                    temp_path.unlink()
+                    if backup_path and backup_path.exists():
+                        backup_path.unlink()
+                    if download_etag:
+                        self._save_stored_etag(download_etag)
+                    return True, final_path
+                else:
+                    log(f"Same version but different size, updating file", None, "INFO")
+                    final_path.unlink()
+            
+            # Move temp file to final versioned location
+            temp_path.replace(final_path)
+            
+            log(f"Successfully downloaded MapWorld APK v{version_name} ({downloaded} bytes)", None, "INFO")
+            
+            # Cleanup old versions
+            self.cleanup_old_versions()
+            
+            # Remove backup file if download was successful
+            if backup_path and backup_path.exists():
+                backup_path.unlink()
+                log("Removed backup file after successful download", None, "DEBUG")
+            
+            if download_etag:
+                self._save_stored_etag(download_etag)
+            await self._notify_update_downloaded("MapWorld", version_name)
+            return True, final_path
+            
+        except Exception as e:
+            log(f"Download failed: {e}", None, "ERROR")
+            
+            # Clean up temp file if it exists
+            if temp_path and temp_path.exists():
+                temp_path.unlink()
+            
+            # Restore backup if download failed
+            if backup_path and backup_path.exists():
+                try:
+                    current_apk = self.get_current_apk_path()
+                    if current_apk:
+                        backup_path.replace(current_apk)
+                        log("Restored backup after failed download", None, "INFO")
+                except Exception as restore_error:
+                    log(f"Error restoring backup: {restore_error}", None, "ERROR")
+            
+            return False, None
+    
+    async def _deep_version_analysis(self, apk_path: Path) -> Optional[str]:
+        """Deeper analysis of APK for version information"""
+        try:
+            with zipfile.ZipFile(apk_path, 'r') as zip_file:
+                # Search in META-INF/MANIFEST.MF
+                try:
+                    manifest_mf = zip_file.read('META-INF/MANIFEST.MF').decode('utf-8')
+                    version_match = re.search(r'Implementation-Version:\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?)', manifest_mf)
+                    if version_match:
+                        return version_match.group(1)
+                except:
+                    pass
+                
+                # Search in resources.arsc or other config files
+                for file_name in zip_file.namelist():
+                    if any(keyword in file_name.lower() for keyword in ['version', 'config', 'build']):
+                        try:
+                            if file_name.endswith(('.xml', '.txt', '.json', '.properties')):
+                                content = zip_file.read(file_name).decode('utf-8', errors='ignore')
+                                # Search for various version patterns
+                                patterns = [
+                                    r'"version":\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?)"',
+                                    r'version=([0-9]+\.[0-9]+(?:\.[0-9]+)?)',
+                                    r'app_version=([0-9]+\.[0-9]+(?:\.[0-9]+)?)',
+                                    r'<version>([0-9]+\.[0-9]+(?:\.[0-9]+)?)</version>',
+                                ]
+                                for pattern in patterns:
+                                    match = re.search(pattern, content, re.IGNORECASE)
+                                    if match and self._is_valid_version(match.group(1)):
+                                        return match.group(1)
+                        except:
+                            continue
+            
+            return None
+        except Exception:
+            return None
+
+    async def get_installed_version(self, device_ip: str) -> Tuple[Optional[str], Optional[str]]:
+        """Determines the installed MapWorld version on a device"""
+        try:
+            # Check ADB connection first
+            connected, error = await self._check_adb_connection_async(device_ip)
+            if not connected:
+                log(f"Cannot check version on {device_ip}: {error}", None, "WARNING")
+                return None, None
+            
+            # Method 1: Try to get version via dumpsys
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: adb_pool.execute_command(
+                    device_ip,
+                    ["adb", "shell", f"dumpsys package {self.config.package_name} | grep versionName"]
+                )
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                # Parse version from output like "versionName=2.54"
+                for line in result.stdout.split('\n'):
+                    if 'versionName=' in line:
+                        version_name = line.split('versionName=')[1].strip()
+                        log(f"Found installed version on {device_ip}: {version_name}", device_ip, "DEBUG")
+                        return version_name, None
+            
+            # Method 2: Try pm list with version
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: adb_pool.execute_command(
+                    device_ip,
+                    ["adb", "shell", f"pm dump {self.config.package_name} | grep versionName"]
+                )
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                for line in result.stdout.split('\n'):
+                    if 'versionName=' in line:
+                        version_name = line.split('versionName=')[1].strip()
+                        log(f"Found installed version via pm dump on {device_ip}: {version_name}", device_ip, "DEBUG")
+                        return version_name, None
+            
+            # Method 3: Check if package exists at all
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: adb_pool.execute_command(
+                    device_ip,
+                    ["adb", "shell", f"pm list packages | grep {self.config.package_name}"]
+                )
+            )
+            
+            if result.returncode == 0 and result.stdout and self.config.package_name in result.stdout:
+                log(f"Package found on {device_ip}, but version extraction failed", device_ip, "DEBUG")
+                return "unknown", None
+            
+            log(f"MapWorld (package: {self.config.package_name}) not installed on {device_ip}", device_ip, "INFO")
+            return None, None
+            
+        except Exception as e:
+            log(f"Error checking installed version on {device_ip}: {e}", device_ip, "ERROR")
+            return None, None
+    
+    def compare_versions(self, version1: str, version2: str) -> int:
+        """Compares two version numbers. Returns -1, 0, or 1"""
+        try:
+            def normalize_version(v):
+                # Split version into parts and convert to integers
+                parts = []
+                for part in v.split('.'):
+                    # Extract numeric part (ignore non-numeric suffixes)
+                    numeric_part = ''.join(c for c in part if c.isdigit())
+                    parts.append(int(numeric_part) if numeric_part else 0)
+                return parts
+            
+            v1_parts = normalize_version(version1)
+            v2_parts = normalize_version(version2)
+            
+            # Pad shorter version with zeros
+            max_len = max(len(v1_parts), len(v2_parts))
+            v1_parts.extend([0] * (max_len - len(v1_parts)))
+            v2_parts.extend([0] * (max_len - len(v2_parts)))
+            
+            for i in range(max_len):
+                if v1_parts[i] < v2_parts[i]:
+                    return -1
+                elif v1_parts[i] > v2_parts[i]:
+                    return 1
+            
+            return 0
+            
+        except Exception as e:
+            log(f"Error comparing versions {version1} vs {version2}: {e}", None, "ERROR")
+            return 0  # Treat as equal if comparison fails
+
+    async def should_update_device(self, device_ip: str, new_version: str) -> Tuple[bool, str]:
+        """Checks if an update is needed on the device"""
+        try:
+            installed_version, _ = await self.get_installed_version(device_ip)
+            
+            if installed_version is None:
+                return True, "MapWorld not installed"
+            
+            if installed_version == "unknown":
+                return True, "Cannot determine installed version"
+            
+            comparison = self.compare_versions(installed_version, new_version)
+            
+            if comparison < 0:
+                return True, f"Update available: {installed_version} ->{new_version}"
+            elif comparison == 0:
+                return False, f"Same version already installed: {installed_version}"
+            else:
+                return False, f"Newer version already installed: {installed_version} > {new_version}"
+                
+        except Exception as e:
+            log(f"Error checking if update needed for {device_ip}: {e}", device_ip, "ERROR")
+            return True, f"Error checking version, will attempt update: {str(e)}"
+
+    async def install_mapworld(self, device_ip: str, force_install: bool = False) -> bool:
+        """Optimized installation with version checking and better error handling"""
+        try:
+            # Get the latest APK
+            current_apk = self.get_current_apk_path()
+            if not current_apk or not current_apk.exists():
+                log("No APK file found for installation", None, "ERROR")
+                return False
+            
+            # Extract version info for comparison
+            version_name, version_code = self.extract_apk_version(current_apk)
+            
+            # Check if update is needed (unless forced)
+            if not force_install:
+                should_update, reason = await self.should_update_device(device_ip, version_name)
+                if not should_update:
+                    log(f"Skipping installation on {device_ip}: {reason}", device_ip, "INFO")
+                    return True  # Return True as it's not an error
+                log(f"Installing on {device_ip}: {reason}", device_ip, "INFO")
+            
+            device_details = get_device_details(device_ip)
+            device_name = device_details.get("display_name", device_ip.split(":")[0])
+            
+            # Check ADB connection first
+            connected, error = await self._check_adb_connection_async(device_ip)
+            if not connected:
+                log(f"Skipping installation on {device_ip}: {error}", device_ip, "WARNING")
+                return False
+            
+            # Execute installation command using synchronous method
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: adb_pool.execute_command(
+                    device_ip,
+                    ["adb", "install", "-r", str(current_apk)]
+                )
+            )
+            
+            if result.returncode == 0:
+                log(f"Successfully installed MapWorld v{version_name} on {device_ip}", device_ip, "INFO")
+                await self._notify_update_installed(device_name, device_ip, "MapWorld", version_name)
+                return True
+            else:
+                log(f"Installation failed on {device_ip}: {result.stderr}", device_ip, "ERROR")
+                return False
+                
+        except Exception as e:
+            log(f"Installation error on {device_ip}: {e}", device_ip, "ERROR")
+            return False
+
+    def get_version_info(self) -> Dict:
+        """Returns information about available versions"""
+        versions = self.get_all_apk_versions()
+        current_apk = self.get_current_apk_path()
+        
+        info = {
+            "total_versions": len(versions),
+            "versions": [],
+            "current_version": None
+        }
+        
+        for apk_path, version_name, version_code in versions:
+            version_info = {
+                "path": str(apk_path),
+                "filename": apk_path.name,
+                "version_name": version_name,
+                "version_code": version_code,
+                "size_mb": round(apk_path.stat().st_size / (1024 * 1024), 2),
+                "modified": datetime.datetime.fromtimestamp(apk_path.stat().st_mtime).isoformat(),
+                "is_current": apk_path == current_apk
+            }
+            info["versions"].append(version_info)
+            
+            if apk_path == current_apk:
+                info["current_version"] = version_info
+        
+        return info
+
+    async def _check_adb_connection_async(self, device_ip: str) -> Tuple[bool, str]:
+        """Async wrapper for ADB connection check"""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, check_adb_connection, device_ip
+        )
+
+    async def _notify_update_downloaded(self, app_name: str, version: str):
+        """Async notification wrapper"""
+        await notify_update_downloaded(app_name, version)
+
+    async def _notify_update_installed(self, device_name: str, device_ip: str, app_name: str, version: str):
+        """Async notification wrapper"""
+        await notify_update_installed(device_name, device_ip, app_name, version)
+async def mapworld_update_task():
+    """Robust Auto-Update Task with version management and better error handling"""
+    updater = MapWorldUpdater()
+    startup_delay = 30
+    
+    log(f"MapWorld update task starting in {startup_delay} seconds...", None, "INFO")
+    await asyncio.sleep(startup_delay)
+    
+    # Log initial version info
+    version_info = updater.get_version_info()
+    if version_info["current_version"]:
+        current = version_info["current_version"]
+        log(f"Current MapWorld version: {current['version_name']} ({current['filename']})", None, "INFO")
+    else:
+        log("No MapWorld APK found", None, "INFO")
+    
+    while True:
+        try:
+            update_available, reason = await updater.has_update_available()
+            log(f"Update check result: {reason}", None, "INFO")
+            
+            if update_available:
+                log("New MapWorld version available, starting download...", None, "INFO")
+                
+                # Download with progress logging
+                async def log_progress(progress):
+                    if progress % 10 == 0:  # Log every 10%
+                        log(f"Download progress: {progress:.1f}%", None, "INFO")
+                
+                download_success, apk_path = await updater.download_mapworld(log_progress)
+                if not download_success:
+                    log("Download failed, skipping installation", None, "ERROR")
+                    continue
+                
+                # Log new version info
+                if apk_path:
+                    version_name, version_code = updater.extract_apk_version(apk_path)
+                    log(f"Successfully downloaded MapWorld v{version_name} (code: {version_code})", None, "INFO")
+                
+                # Install on all connected devices
+                config = load_config()
+                devices = config.get("devices", [])
+                
+                if not devices:
+                    log("No devices configured for installation", None, "WARNING")
+                    continue
+                
+                # Parallel installation with limited concurrency and better reporting
+                semaphore = asyncio.Semaphore(3)  # Max 3 concurrent installations
+                
+                async def install_on_device_with_info(device):
+                    async with semaphore:
+                        device_ip = device["ip"]
+                        device_name = device.get("name", device_ip.split(":")[0])
+                        
+                        try:
+                            # Check current installed version first
+                            installed_version, _ = await updater.get_installed_version(device_ip)
+                            log(f"Device {device_name} ({device_ip}): "
+                                      f"installed={installed_version or 'Not installed'}", device_ip, "INFO")
+                            
+                            result = await updater.install_mapworld(device_ip)
+                            
+                            if result:
+                                final_version, _ = await updater.get_installed_version(device_ip)
+                                log(f"Device {device_name}: Installation successful, "
+                                          f"now running v{final_version or 'unknown'}", device_ip, "INFO")
+                            else:
+                                log(f"Device {device_name}: Installation failed", device_ip, "WARNING")
+                            
+                            return result
+                            
+                        except Exception as e:
+                            log(f"Device {device_name}: Installation error: {e}", device_ip, "ERROR")
+                            return False
+                
+                # Execute installations
+                tasks = [install_on_device_with_info(device) for device in devices]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Count results
+                successful_installs = 0
+                skipped_installs = 0
+                failed_installs = 0
+                
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        failed_installs += 1
+                        log(f"Device {devices[i]['ip']}: Exception during installation: {result}", devices[i]['ip'], "ERROR")
+                    elif result is True:
+                        successful_installs += 1
+                    elif result is False:
+                        failed_installs += 1
+                    else:
+                        skipped_installs += 1
+                
+                total_devices = len(devices)
+                log(f"Installation summary: {successful_installs} successful, "
+                          f"{skipped_installs} skipped, {failed_installs} failed "
+                          f"out of {total_devices} devices", None, "INFO")
+                
+                # Log final version status
+                final_version_info = updater.get_version_info()
+                log(f"Available versions: {final_version_info['total_versions']}", None, "INFO")
+        
+        except Exception as e:
+            log(f"Auto-update error: {e}", None, "ERROR")
+            import traceback
+            traceback.print_exc()
+        
+        # Wait for next check
+        check_interval = updater.config.check_interval_hours * 3600
+        log(f"Next update check in {updater.config.check_interval_hours} hours", None, "DEBUG")
+        await asyncio.sleep(check_interval)
+async def scheduled_update_task():
+    """
+    Improved scheduled update checks with flexible configuration
+    """
+    # Configurable update times
+    update_hours = [3, 15]  # 3:00 AM and 3:00 PM
+    last_run_dates = set()
+    
+    while True:
+        try:
+            now = datetime.datetime.now()
+            today = now.date()
+            current_hour = now.hour
+            
+            # Check if it's time for an update check
+            should_run = (
+                current_hour in update_hours and 
+                now.minute < 5 and  # Within first 5 minutes of the hour
+                (today, current_hour) not in last_run_dates
+            )
+            
+            if should_run:
+                log(f"Running scheduled update check at {now}", None, "INFO")
+                
+                # MapWorld Updates
+                updater = MapWorldUpdater()
+                update_available, reason = await updater.has_update_available()
+                
+                if update_available:
+                    log(f"Scheduled update triggered: {reason}", None, "INFO")
+                    download_success, apk_path = await updater.download_mapworld()
+                    
+                    if download_success and apk_path:
+                        version_name, version_code = updater.extract_apk_version(apk_path)
+                        log(f"Scheduled download completed: MapWorld v{version_name}", None, "INFO")
+                    else:
+                        log("Scheduled download failed", None, "ERROR")
+                
+                # PoGO Updates (existing function)
+                ensure_latest_apk_downloaded()
+                
+                # Mark this hour as completed for today
+                last_run_dates.add((today, current_hour))
+                
+                # Clean up old entries (keep only last 7 days)
+                cutoff_date = today - datetime.timedelta(days=7)
+                last_run_dates = {
+                    (date, hour) for date, hour in last_run_dates 
+                    if date >= cutoff_date
+                }
+                
+                log("Scheduled update check completed", None, "INFO")
+            
+            # Check every minute
+            await asyncio.sleep(60)
+            
+        except Exception as e:
+            log(f"Error in scheduled update task: {e}", None, "ERROR")
+            import traceback
+            traceback.print_exc()
+            await asyncio.sleep(300)  # Wait 5 minutes on error
+async def check_all_device_versions() -> Dict:
+    """Checks MapWorld versions on all configured devices"""
+    updater = MapWorldUpdater()
+    config = load_config()
+    devices = config.get("devices", [])
+    
+    if not devices:
+        return {"error": "No devices configured"}
+    
+    results = {}
+    
+    async def check_device_version(device):
+        device_ip = device["ip"]
+        device_name = device.get("name", device_ip.split(":")[0])
+        
+        try:
+            installed_version, _ = await updater.get_installed_version(device_ip)
+            connected, connection_error = await updater._check_adb_connection_async(device_ip)
+            
+            return {
+                "device_name": device_name,
+                "device_ip": device_ip,
+                "installed_version": installed_version,
+                "connected": connected,
+                "connection_error": connection_error if not connected else None,
+                "status": "installed" if installed_version else "not_installed"
+            }
+        except Exception as e:
+            return {
+                "device_name": device_name,
+                "device_ip": device_ip,
+                "installed_version": None,
+                "connected": False,
+                "connection_error": str(e),
+                "status": "error"
+            }
+    
+    # Check all devices in parallel
+    tasks = [check_device_version(device) for device in devices]
+    device_results = await asyncio.gather(*tasks)
+    
+    # Get current downloadable version
+    current_apk = updater.get_current_apk_path()
+    available_version = None
+    if current_apk and current_apk.exists():
+        available_version, _ = updater.extract_apk_version(current_apk)
+    
+    # Organize results
+    for device_result in device_results:
+        device_ip = device_result["device_ip"]
+        results[device_ip] = device_result
+        
+        # Add update status
+        if available_version and device_result["installed_version"]:
+            if device_result["installed_version"] != "unknown":
+                comparison = updater.compare_versions(
+                    device_result["installed_version"], 
+                    available_version
+                )
+                if comparison < 0:
+                    device_result["update_available"] = True
+                    device_result["update_info"] = f"{device_result['installed_version']} ->{available_version}"
+                elif comparison == 0:
+                    device_result["update_available"] = False
+                    device_result["update_info"] = "Up to date"
+                else:
+                    device_result["update_available"] = False
+                    device_result["update_info"] = f"Newer version installed: {device_result['installed_version']}"
+            else:
+                device_result["update_available"] = True
+                device_result["update_info"] = "Version unknown, update recommended"
+        elif available_version:
+            device_result["update_available"] = True
+            device_result["update_info"] = f"Not installed, can install v{available_version}"
+        else:
+            device_result["update_available"] = False
+            device_result["update_info"] = "No APK available for installation"
+    
+    # Add summary
+    total_devices = len(device_results)
+    connected_devices = sum(1 for r in device_results if r["connected"])
+    installed_devices = sum(1 for r in device_results if r["status"] == "installed")
+    update_needed = sum(1 for r in device_results if r.get("update_available", False))
+    
+    summary = {
+        "total_devices": total_devices,
+        "connected_devices": connected_devices,
+        "installed_devices": installed_devices,
+        "updates_needed": update_needed,
+        "available_version": available_version,
+        "devices": results
+    }
+    
+    return summary
+def get_mapworld_version_info() -> Dict:
+    """Public function to retrieve version information"""
+    updater = MapWorldUpdater()
+    return updater.get_version_info()
+async def install_specific_version(device_ip: str, version_name: str = None) -> bool:
+    """Installs a specific version on a device"""
+    updater = MapWorldUpdater()
+    
+    if version_name:
+        # Search for specific version
+        versions = updater.get_all_apk_versions()
+        target_apk = None
+        
+        for apk_path, v_name, v_code in versions:
+            if v_name == version_name:
+                target_apk = apk_path
+                break
+        
+        if not target_apk:
+            log(f"Version {version_name} not found", None, "ERROR")
+            return False
+        
+        # Temporarily set APK as "current" for installation
+        current_apk = updater.get_current_apk_path()
+        if current_apk != target_apk:
+            # Backup current
+            backup_name = f"{current_apk.stem}_temp_backup{current_apk.suffix}"
+            backup_path = current_apk.parent / backup_name
+            if current_apk and current_apk.exists():
+                shutil.copy2(current_apk, backup_path)
+            
+            # Copy target to current position
+            temp_current = current_apk.parent / f"temp_current_{target_apk.name}"
+            shutil.copy2(target_apk, temp_current)
+            
+            try:
+                result = await updater.install_mapworld(device_ip)
+                
+                # Restore original current
+                if backup_path.exists():
+                    backup_path.replace(current_apk)
+                    backup_path.unlink(missing_ok=True)
+                
+                temp_current.unlink(missing_ok=True)
+                return result
+                
+            except Exception as e:
+                # Cleanup on error
+                temp_current.unlink(missing_ok=True)
+                if backup_path.exists():
+                    backup_path.replace(current_apk)
+                raise e
+    
+    # Install current version
+    return await updater.install_mapworld(device_ip)
+def cleanup_mapworld_versions(keep_versions: int = None) -> int:
+    """Manual cleanup of old versions"""
+    updater = MapWorldUpdater()
+    
+    if keep_versions is not None:
+        original_keep = updater.config.keep_previous_versions
+        updater.config.keep_previous_versions = keep_versions
+        
+    try:
+        versions_before = len(updater.get_all_apk_versions())
+        updater.cleanup_old_versions()
+        versions_after = len(updater.get_all_apk_versions())
+        
+        removed_count = versions_before - versions_after
+        log(f"Cleanup completed: removed {removed_count} old versions", None, "INFO")
+        return removed_count
+        
+    finally:
+        if keep_versions is not None:
+            updater.config.keep_previous_versions = original_keep
+def fix_apk_version(current_filename: str, correct_version: str) -> bool:
+    """Renames an APK file with the correct version"""
+    try:
+        updater = MapWorldUpdater()
+        current_path = updater.config.apk_dir / current_filename
+        
+        if not current_path.exists():
+            log(f"File {current_filename} not found", None, "ERROR")
+            return False
+        
+        # Validate new version
+        if not updater._is_valid_version(correct_version):
+            log(f"Invalid version format: {correct_version}", None, "ERROR")
+            return False
+        
+        # Create new filename
+        new_filename = updater.get_versioned_filename(correct_version, "0")
+        new_path = updater.config.apk_dir / new_filename
+        
+        if new_path.exists():
+            log(f"Target filename {new_filename} already exists", None, "WARNING")
+            return False
+        
+        # Rename
+        current_path.rename(new_path)
+        log(f"Renamed {current_filename} ->{new_filename}", None, "INFO")
+        
+        return True
+        
+    except Exception as e:
+        log(f"Error renaming APK: {e}", None, "ERROR")
+        return False
+async def force_download_with_version(version: str) -> bool:
+    """Downloads MapWorld and forces a specific version"""
+    try:
+        updater = MapWorldUpdater()
+        
+        log(f"Force downloading MapWorld with version {version}", None, "INFO")
+        success, apk_path = await updater.download_mapworld(force_version=version)
+        
+        if success and apk_path:
+            log(f"Successfully downloaded and set version to {version}", None, "INFO")
+            return True
+        else:
+            log("Force download failed", None, "ERROR")
+            return False
+            
+    except Exception as e:
+        log(f"Error during force download: {e}", None, "ERROR")
+        return False
+def debug_apk_version(filename: str = None) -> None:
+    """Debug function to find all versions in an APK"""
+    try:
+        updater = MapWorldUpdater()
+        
+        if filename:
+            apk_path = updater.config.apk_dir / filename
+        else:
+            apk_path = updater.get_current_apk_path()
+        
+        if not apk_path or not apk_path.exists():
+            print(f"APK file not found: {apk_path}")
+            return
+        
+        print(f"\n=== DEBUG: Analyzing {apk_path.name} ===")
+        
+        # Enable debug mode
+        version, code = updater.extract_apk_version(apk_path, debug=True)
+        
+        print(f"\nFinal result: {version} (code: {code})")
+        
+    except Exception as e:
+        print(f"Error during debug analysis: {e}")
+def quick_fix_version() -> bool:
+    """Quick repair of current version to 2.55"""
+    try:
+        updater = MapWorldUpdater()
+        current_apk = updater.get_current_apk_path()
+        
+        if not current_apk:
+            log("No current APK found", None, "ERROR")
+            return False
+        
+        # Correct to probably right version
+        correct_version = "2.55"  # Adjustable based on current MapWorld version
+        
+        new_filename = updater.get_versioned_filename(correct_version, "0")
+        new_path = current_apk.parent / new_filename
+        
+        if new_path.exists():
+            log(f"Target file {new_filename} already exists, removing old file", None, "WARNING")
+            current_apk.unlink()
+        else:
+            current_apk.rename(new_path)
+        
+        log(f"Fixed version: {current_apk.name} ->{new_filename}", None, "INFO")
+        return True
+        
+    except Exception as e:
+        log(f"Error fixing version: {e}", None, "ERROR")
+        return False
+async def redownload_with_correct_version(correct_version: str = "2.55") -> bool:
+    """Downloads MapWorld again and forces correct version"""
+    try:
+        updater = MapWorldUpdater()
+        backup_path = None
+        
+        # Backup current if exists
+        current_apk = updater.get_current_apk_path()
+        if current_apk:
+            backup_path = current_apk.with_suffix('.backup')
+            current_apk.rename(backup_path)
+            log(f"Backed up current APK to {backup_path.name}", None, "INFO")
+        
+        # Download with correct version
+        log(f"Re-downloading MapWorld with correct version {correct_version}", None, "INFO")
+        success, new_path = await updater.download_mapworld(force_version=correct_version)
+        
+        if success:
+            log(f"Successfully re-downloaded with version {correct_version}", None, "INFO")
+            
+            # Remove backup if successful
+            if backup_path and backup_path.exists():
+                backup_path.unlink()
+                log("Removed backup file", None, "INFO")
+            
+            return True
+        else:
+            log("Re-download failed", None, "ERROR")
+            
+            # Restore backup
+            if backup_path and backup_path.exists():
+                backup_path.rename(current_apk)
+                log("Restored backup file", None, "INFO")
+            
+            return False
+            
+    except Exception as e:
+        log(f"Error during re-download: {e}", None, "ERROR")
+        return False
+def list_mapworld_versions() -> None:
+    """Shows all available MapWorld versions"""
+    try:
+        updater = MapWorldUpdater()
+        info = updater.get_version_info()
+        
+        print(f"\n=== MapWorld Versions ({info['total_versions']} total) ===")
+        
+        for i, version in enumerate(info['versions']):
+            status = " [CURRENT]" if version['is_current'] else ""
+            print(f"{i+1:2d}. {version['filename']}{status}")
+            print(f"    Version: {version['version_name']} (code: {version['version_code']})")
+            print(f"    Size: {version['size_mb']} MB")
+            print(f"    Modified: {version['modified']}")
+            print()
+        
+        if info['current_version']:
+            print(f"Current version: {info['current_version']['version_name']}")
+        else:
+            print("No current version found")
+            
+    except Exception as e:
+        print(f"Error listing versions: {e}")
+PIF_MODULE_DIR = BASE_DIR / "data" / "modules" / "playintegrityfork"
+PIF_GITHUB_API = "https://api.github.com/repos/osm0sis/PlayIntegrityFork/releases?per_page=10"
+def clear_github_api_cache():
+    """Clears the GitHub API cache to force fresh data on next request"""
+    state.github_api_cache.clear()
+    log("GitHub API cache cleared", None, "CONFIG")
+async def fetch_repo_versions(repo: str, source_name: str, module_type="fork"):
+    """Fetches available versions from a specific GitHub repo"""
+    api_url = f"https://api.github.com/repos/{repo}/releases?per_page=10"
+    max_retries = 3
+    timeout_values = [10, 15, 20]
+    
+    for attempt in range(max_retries):
+        try:
+            timeout = timeout_values[attempt]
+            log(f"Fetching releases from {source_name} ({repo}) - attempt {attempt + 1}/{max_retries}", None, "API")
+            
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=httpx.Timeout(timeout),
+                limits=httpx.Limits(max_connections=5)
+            ) as client:
+                
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/vnd.github.v3+json",
+                    "X-GitHub-Api-Version": "2022-11-28"
+                }
+                
+                response = await client.get(api_url, headers=headers)
+                
+                if response.status_code == 200:
+                    try:
+                        releases = response.json()
+                        if not releases or not isinstance(releases, list):
+                            log(f"Empty or invalid releases data from {source_name}", None, "API")
+                            return []
+                        
+                        versions = []
+                        for release in releases:
+                            if not isinstance(release, dict):
+                                continue
+                                
+                            tag_name = release.get("tag_name", "").strip()
+                            if not tag_name:
+                                continue
+                                
+                            version = tag_name.lstrip("v")
+                            published_at = release.get("published_at", "")
+                            
+                            assets = release.get("assets", [])
+                            if not isinstance(assets, list):
+                                continue
+                                
+                            zip_asset = next(
+                                (asset for asset in assets
+                                 if isinstance(asset, dict) and 
+                                 asset.get("name", "").endswith(".zip") and
+                                 asset.get("browser_download_url")),
+                                None
+                            )
+                            
+                            if zip_asset:
+                                versions.append({
+                                    "version": version,
+                                    "tag_name": tag_name,
+                                    "published_at": published_at,
+                                    "download_url": zip_asset.get("browser_download_url"),
+                                    "filename": zip_asset.get("name"),
+                                    "module_type": module_type,
+                                    "source_name": source_name,
+                                    "source_repo": repo
+                                })
+                        
+                        log(f"Fetched {len(versions)} versions from {source_name}", None, "VERSION")
+                        return versions
+                        
+                    except (json.JSONDecodeError, KeyError, TypeError) as e:
+                        log(f"Invalid API response from {source_name}: {str(e)}", None, "ERROR")
+                        return []
+                        
+                elif response.status_code == 403:
+                    log(f"GitHub API rate limit exceeded for {source_name}", None, "API")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(300)
+                        continue
+                        
+                elif response.status_code == 404:
+                    log(f"GitHub repository not found: {repo}", None, "ERROR")
+                    return []
+                    
+                else:
+                    log(f"GitHub API HTTP {response.status_code} for {source_name}", None, "API")
+                
+        except (httpx.TimeoutException, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+            log(f"Network timeout for {source_name}: {str(e)}", None, "ERROR")
+        except (httpx.HTTPError, httpx.RequestError) as e:
+            log(f"Network error for {source_name}: {str(e)}", None, "ERROR")
+        except Exception as e:
+            log(f"Unexpected error for {source_name}: {str(e)}", None, "ERROR")
+        
+        if attempt < max_retries - 1:
+            wait_time = 2 ** attempt
+            await asyncio.sleep(wait_time)
+    
+    log(f"Failed to fetch versions from {source_name} after {max_retries} attempts", None, "ERROR")
+    return []
+async def fetch_available_module_versions(module_type="fork"):
+    """Fetches available PlayIntegrityFork versions from all configured GitHub sources with caching"""
+    cache_key = "module_versions_fork"
+    current_time = time.time()
+    
+    # Check cache first
+    if cache_key in state.github_api_cache:
+        cached_data, timestamp = state.github_api_cache[cache_key]
+        if current_time - timestamp < GITHUB_CACHE_TTL:
+            log(f"Using cached module versions ({int((current_time - timestamp)/60)}min old)", None, "VERSION")
+            return cached_data
+    
+    # Get enabled sources from config
+    config = load_config()
+    sources = config.get("pif_module_sources", [])
+    enabled_sources = [s for s in sources if s.get("enabled", True)]
+    
+    if not enabled_sources:
+        log("No enabled module sources found, using default", None, "CONFIG")
+        enabled_sources = [{"name": "PlayIntegrityFork (Official)", "repo": "osm0sis/PlayIntegrityFork", "enabled": True}]
+    
+    PIF_MODULE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Fetch from all enabled sources concurrently
+    all_versions = []
+    tasks = []
+    
+    for source in enabled_sources:
+        repo = source.get("repo", "")
+        name = source.get("name", repo)
+        if repo:
+            tasks.append(fetch_repo_versions(repo, name, module_type))
+    
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, list):
+                all_versions.extend(result)
+            elif isinstance(result, Exception):
+                log(f"Error fetching from source: {result}", None, "ERROR")
+    
+    # Sort all versions by version number (newest first)
+    if all_versions:
+        all_versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
+        log(f"Total versions from all sources: {len(all_versions)}", None, "VERSION")
+        # Cache the successful result
+        state.github_api_cache[cache_key] = (all_versions, current_time)
+        return all_versions
+    
+    log("No versions found from any source", None, "ERROR")
+    return []
+async def fetch_available_pif_versions():
+    """
+    Compatibility function to maintain backward compatibility with existing code.
+    Simply calls fetch_available_module_versions with 'fork' as the module type.
+    """
+    return await fetch_available_module_versions("fork")
+async def download_module_version(version_info):
+    """Downloads a PlayIntegrityFork version and saves it with the original filename"""
+    try:
+        version = version_info["version"]
+        download_url = version_info["download_url"]
+        filename = version_info["filename"]
+        
+        module_dir = PIF_MODULE_DIR
+        module_path = module_dir / filename
+        
+        if module_path.exists():
+            log(f"FORK version {version} already downloaded", None, "UPDATE")
+            return module_path
+        
+        log(f"Downloading FORK version {version}", None, "UPDATE")
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "application/octet-stream",
+                "Accept-Encoding": "gzip, deflate, br"
+            }
+            
+            download_response = await client.get(download_url, headers=headers, timeout=30)
+            
+            if download_response.status_code != 200:
+                log(f"Download failed with status code: {download_response.status_code}", None, "ERROR")
+                return None
+                
+            content_type = download_response.headers.get("content-type", "").lower()
+            if "html" in content_type:
+                log("GitHub returned HTML instead of ZIP, using alternative method", None, "API")
+                
+                direct_url = download_url.replace("/api.github.com/repos/", "/github.com/")
+                direct_url = direct_url.replace("/releases/assets/", "/releases/download/v")
+                direct_url = direct_url.replace("/download/v", "/download/v" + version + "/")
+                
+                log(f"Trying alternative URL: {direct_url}", None, "API")
+                alt_response = await client.get(direct_url, headers=headers, timeout=30)
+                
+                if alt_response.status_code != 200:
+                    log(f"Alternative download failed: {alt_response.status_code}", None, "ERROR")
+                    return None
+                    
+                content_type = alt_response.headers.get("content-type", "").lower()
+                if "html" in content_type:
+                    log("Alternative method also returned HTML, unable to download ZIP", None, "ERROR")
+                    return None
+                    
+                download_response = alt_response
+            
+            with open(module_path, "wb") as f:
+                f.write(download_response.content)
+            
+            if not zipfile.is_zipfile(module_path):
+                log("Downloaded file is not a valid ZIP", None, "ERROR")
+                module_path.unlink()
+                return None
+        
+        log(f"Downloaded FORK version {version}", None, "UPDATE")
+        return module_path
+        
+    except Exception as e:
+        log(f"Error downloading FORK version {version}: {str(e)}", None, "ERROR")
+        traceback.print_exc()
+        return None
+async def get_all_module_versions_for_ui():
+    """Returns PlayIntegrityFork versions for UI display"""
+    fork_versions = await fetch_available_module_versions("fork")
+    
+    for version in fork_versions:
+        version["name"] = f"PlayIntegrityFork {version['version']}"
+    
+    return {
+        "all": fork_versions,
+        "fork": fork_versions,
+        "preferred": "fork"
+    }
+async def get_pif_versions_for_ui():
+    """
+    Returns PlayIntegrityFork versions for UI.
+    """
+    versions = await fetch_available_module_versions("fork")
+    versions.sort(key=lambda x: parse_version(x["version"]), reverse=True)
+    return versions
+async def fetch_pif_version(version_info):
+    """Compatibility wrapper for download_module_version"""
+    return await download_module_version(version_info)
+async def install_pif_module(device_ip: str, pif_module_path=None):
+    """Compatibility wrapper for install_module_with_progress"""
+    return await install_module_with_progress(device_ip, pif_module_path, "fork")
+async def optimized_module_update_task():
+    """Checks and installs PlayIntegrityFork updates with reduced version queries"""
+    while True:
+        try:
+            config = load_config()
+            
+            log("Checking for PlayIntegrityFork updates...", None, "UPDATE")
+
+            versions = await fetch_available_module_versions("fork")
+            if not versions:
+                log("No valid FORK versions available, skipping check", None, "UPDATE")
+                await asyncio.sleep(3 * 3600)
+                continue
+                
+            latest_version = versions[0]
+            new_version = latest_version["version"]
+
+            log(f"Latest FORK version available: {new_version}", None, "VERSION")
+                
+            module_path = await download_module_version(latest_version)
+            if not module_path:
+                log("Failed to download module, skipping update", None, "ERROR")
+                await asyncio.sleep(3 * 3600)
+                continue
+
+            if not config.get("pif_auto_update_enabled", True):
+                log("FORK auto-update disabled, module downloaded but not installed", None, "UPDATE")
+                await asyncio.sleep(3 * 3600)
+                continue
+
+            # Find devices needing update
+            devices_to_update = []
+            config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
+            
+            for device in config.get("devices", []):
+                device_id = device["ip"]
+                
+                connected, error = check_adb_connection(device_id)
+                if not connected:
+                    log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
+                    continue
+                    
+                version_info = version_manager.get_version_info(device_id, force_refresh=False)
+                
+                if not version_info:
+                    log("No version information available", device_id, "VERSION")
+                    continue
+                    
+                installed_module = version_info.get("module_version", "N/A").strip()
+                
+                # Skip devices without any module installed
+                if installed_module == "N/A":
+                    log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
+                    continue
+                    
+                module_is_fork = "Fork" in installed_module
+                
+                # Skip devices with Fix module - only update Fork devices
+                if not module_is_fork:
+                    log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
+                    continue
+                
+                # Extract and compare versions
+                version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
+                    
+                if version_match:
+                    current_version = version_match.group(1)
+                    try:
+                        current_tuple = parse_version(current_version)
+                        new_tuple = parse_version(new_version)
+                        
+                        if current_tuple < new_tuple:
+                            log(f"Update needed: {current_version} -> {new_version}", device_id, "UPDATE")
+                            devices_to_update.append(device_id)
+                    except (ValueError, AttributeError):
+                        devices_to_update.append(device_id)
+                else:
+                    devices_to_update.append(device_id)
+
+            update_count = len(devices_to_update)
+            if update_count > 0:
+                log(f"Installing FORK {new_version} on {update_count} devices", None, "UPDATE")
+                
+                for device_id in devices_to_update:
+                    try:
+                        log(f"Updating to FORK {new_version}", device_id, "UPDATE")
+                        await install_module_with_progress(device_id, module_path, "fork")
+                        
+                        # Mark device for version refresh
+                        version_manager.mark_for_refresh(device_id)
+
+                    except Exception as e:
+                        log(f"Error installing module: {str(e)}", device_id, "ERROR")
+                
+                log("FORK update complete", None, "UPDATE")
+                
+                status_data = await get_status_data()
+                await ws_manager.broadcast(status_data)
+            else:
+                log("All devices already have latest version, no updates needed", None, "UPDATE")
+
+        except Exception as e:
+            log(f"Module Auto-Update Error: {str(e)}", None, "ERROR")
+            import traceback
+            traceback.print_exc()
+
+        await asyncio.sleep(3 * 3600)
+async def install_module_with_progress(device_ip: str, module_path=None, module_type="fork"):
+    """Installs PlayIntegrityFork module with progress updates for the UI"""
+    
+    def cleanup_installation():
+        """Helper function to clean up installation state"""
+        state.update_in_progress = False
+        state.current_progress = 0
+        clear_device_update_status(device_ip)
+    
+    try:
+        # Mark device as in update
+        mark_device_in_update(device_ip, f"pif-{module_type}")
+
+        # Broadcast immediately so UI shows spinner
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+
+        device_id = format_device_id(device_ip)
+        log(f"Starting {module_type.upper()} module installation", device_ip, "UPDATE")
+        
+        update_progress(5)
+        
+        # Verify this device is in the config
+        config = load_config()
+        device_in_config = any(dev["ip"] == device_id for dev in config.get("devices", []))
+        if not device_in_config:
+            log("Not found in config, aborting module installation", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        update_progress(10)
+        
+        if not adb_pool.ensure_connected(device_id):
+            log("Cannot connect for module installation", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        if module_path is None or not Path(module_path).exists():
+            log(f"Module file not found at {module_path}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        version = "unknown"
+        filename = Path(module_path).name
+        version_match = re.search(r'v?(\d+\.\d+)', filename)
+        if version_match:
+            version = version_match.group(1)
+        
+        device_details = get_device_details(device_ip)
+        device_name = device_details.get("display_name", device_ip.split(":")[0])
+
+        update_progress(15)
+        
+        # Remove existing modules (no reboot needed)
+        log("Removing existing modules", device_id, "UPDATE")
+        adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "su -c 'rm -rf /data/adb/modules/playintegrityfix'"]
+        )
+        adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "su -c 'rm -rf /data/adb/modules/playintegrityfork'"]
+        )
+        
+        update_progress(25)
+        log(f"Pushing {module_type.upper()} module", device_id, "UPDATE")
+        
+        push_result = adb_pool.execute_command(
+            device_id,
+            ["adb", "push", str(module_path), "/data/local/tmp/pif.zip"]
+        )
+        
+        if push_result.returncode != 0:
+            log(f"Failed to push module: {push_result.stderr}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        update_progress(40)
+        log(f"Installing {module_type.upper()} module", device_id, "UPDATE")
+        
+        # First check if Magisk is installed and available
+        magisk_check = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "su -c 'magisk -v'"]
+        )
+        
+        if magisk_check.returncode != 0 or "not found" in magisk_check.stderr:
+            log(f"Magisk not available: {magisk_check.stderr}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        # Now install the module
+        install_result = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "su -c 'magisk --install-module /data/local/tmp/pif.zip'"]
+        )
+        
+        if install_result.returncode != 0:
+            log(f"Module installation failed: {install_result.stderr}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        update_progress(60)
+        
+        # Verify module was installed
+        module_dir = "/data/adb/modules/playintegrityfork"
+        verify_result = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", f"su -c 'ls -la {module_dir}'"]
+        )
+        
+        if verify_result.returncode != 0 or "No such file" in verify_result.stderr:
+            log(f"Module directory not found after installation: {verify_result.stderr}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+        
+        # Clean up
+        adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", "rm /data/local/tmp/pif.zip"]
+        )
+        
+        update_progress(70)
+        log(f"Rebooting to apply {module_type.upper()} module", device_id, "UPDATE")
+        
+        adb_pool.execute_command(device_id, ["adb", "reboot"])
+
+        # Wait for device to come back online after reboot
+        log("Waiting for device to come back online after reboot", device_id, "UPDATE")
+        device_back_online = False
+        for i in range(30):  # 5 minutes timeout
+            await asyncio.sleep(10)
+            update_progress(70 + (i * 0.8))  # Progress from 70 to 94
+            try:
+                if adb_pool.ensure_connected(device_id):
+                    log("Back online after reboot", device_id, "UPDATE")
+                    device_back_online = True
+                    break
+            except Exception as e:
+                log(f"Error checking connectivity: {str(e)}", device_id, "ERROR")
+                continue
+                
+        if not device_back_online:
+            log("Did not come back online after reboot, installation status uncertain", device_id, "ERROR")
+            cleanup_installation()
+            return False
+            
+        # Verify module is actually enabled
+        await asyncio.sleep(10)  # Give a moment for the system to stabilize
+        
+        update_progress(95)
+        
+        # Final verification
+        final_verify = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", f"su -c 'cat {module_dir}/module.prop'"]
+        )
+        
+        if final_verify.returncode != 0 or "No such file" in final_verify.stderr:
+            log(f"Module not properly installed after reboot: {final_verify.stderr}", device_id, "ERROR")
+            cleanup_installation()
+            return False
+            
+        module_enabled = adb_pool.execute_command(
+            device_id,
+            ["adb", "shell", f"su -c '[ -f {module_dir}/disable ] && echo disabled || echo enabled'"]
+        )
+        
+        if "disabled" in module_enabled.stdout:
+            log("Warning: Module is installed but appears to be disabled", device_id, "UPDATE")
+
+        # Clear update status BEFORE refreshing version info,
+        # otherwise get_version_info() skips refresh for devices marked as in_update
+        clear_device_update_status(device_ip)
+
+        device_status_cache.clear()
+        version_manager.mark_for_refresh(device_id)
+        log("FORK update successfully completed", device_id, "UPDATE")
+        
+        # Clear GitHub API cache to ensure fresh version info on next check
+        clear_github_api_cache()
+
+        # Now that we've verified installation, send notification
+        await notify_update_installed(device_name, device_id, "PlayIntegrityFork", version)
+        
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+        
+        update_progress(100)
+        await asyncio.sleep(2)
+        
+        # Successful completion cleanup
+        state.update_in_progress = False
+        state.current_progress = 0
+        
+        return True
+    
+    except Exception as e:
+        log(f"Module installation error: {str(e)}", device_ip, "ERROR")
+        traceback.print_exc()
+        cleanup_installation()
+        return False
+    
+    finally:
+        # Clear update status
+        clear_device_update_status(device_ip)
+async def optimized_device_monitoring():
+    """
+    Optimized device monitoring with fixed notification logic to ensure
+    both offline and online notifications are properly sent.
+    """
+    device_last_status = {}  # Track previous status for change detection
+    monitoring_interval = 60  # seconds
+    notification_cooldown = 300  # seconds (5 minutes) between repeated notifications
+    
+    while True:
+        try:
+            config = load_config()
+            current_time = time.time()
+            
+            # Find all devices that should be monitored
+            monitored_devices = [
+                dev for dev in config.get("devices", [])
+                if dev.get("control_enabled", False)
+            ]
+            
+            for device in monitored_devices:
+                device_id = device["ip"]
+                display_name = device.get("display_name", device_id.split(":")[0])
+                
+                # Skip devices currently being updated
+                if device_id in devices_in_update and devices_in_update[device_id]["in_update"]:
+                    update_type = devices_in_update[device_id]["update_type"]
+                    update_duration = int(current_time - devices_in_update[device_id]["started_at"])
+                    log(f"Update in progress ({update_type}, {update_duration}s) - skipping monitoring", device_id, "MONITOR")
+                    continue
+                
+                # Get current status from the status cache (populated by API updates)
+                status = device_status_cache.get(device_id, {})
+                if not status:
+                    log("No status data available, skipping monitoring", device_id, "MONITOR")
+                    continue
+                
+                # Extract data from the status cache
+                is_alive = status.get("is_alive", False)
+                mem_free = status.get("mem_free", 0)
+                adb_status = status.get("adb_status", False)
+                runtime = status.get("runtime", None)
+                last_runtime = status.get("last_runtime", None)
+                
+                # Get notification timestamps to prevent spam
+                last_offline_notification = status.get("last_offline_notification", 0)
+                last_online_notification = status.get("last_online_notification", 0)
+                
+                # Get last known status of the device 
+                was_alive = device_last_status.get(device_id, {}).get("is_alive")
+                
+                # If we don't have previous status (first run), assume null state
+                if was_alive is None:
+                    # Initialize status without sending notifications
+                    device_last_status[device_id] = {"is_alive": is_alive}
+                    log(f"Status tracking initialized: is_alive={is_alive}", device_id, "MONITOR")
+                    # Store this status in cache without notification
+                    status["last_status_change"] = current_time
+                    device_status_cache[device_id] = status
+                    continue
+                
+                # Check for status change to send notifications
+                # Device just went offline
+                if was_alive and not is_alive:
+                    # Check if we need to send notification (respect cooldown)
+                    if current_time - last_offline_notification > notification_cooldown:
+                        log("Offline - notification sent", device_id, "MONITOR")
+                        await notify_device_offline(display_name, device_id)
+                        
+                        # Update notification timestamp
+                        status["last_offline_notification"] = current_time
+                        device_status_cache[device_id] = status
+                    else:
+                        log("Offline notification in cooldown", device_id, "MONITOR")
+                
+                # Device just came back online
+                elif not was_alive and is_alive:
+                    # Check if we need to send notification (respect cooldown)
+                    if current_time - last_online_notification > notification_cooldown:
+                        log("Online - notification sent", device_id, "MONITOR")
+                        await notify_device_online(display_name, device_id)
+                        
+                        # Update notification timestamp
+                        status["last_online_notification"] = current_time
+                        device_status_cache[device_id] = status
+                    else:
+                        log("Online notification in cooldown", device_id, "MONITOR")
+                
+                # Format runtime for display
+                runtime_formatted = format_runtime(runtime) if runtime is not None else "N/A"
+                last_runtime_formatted = format_runtime(last_runtime) if last_runtime is not None else "N/A"
+                
+                # Format memory value
+                mem_mb = mem_free / 1024 if mem_free > 0 else 0
+                
+                # Format status for log output
+                status_text = "OK" if is_alive else "OFFLINE"
+                memory_status = f"{mem_mb:.2f}/{device.get('memory_threshold', 200)}MB"
+
+                log(f"Status: {status_text} | Mem: {memory_status} | Runtime: {runtime_formatted}" + (f" | Last: {last_runtime_formatted}" if last_runtime is not None else ""), device_id, "MONITOR")
+                
+                if not adb_status:
+                    log("ADB not reachable, skipping monitoring", device_id, "MONITOR")
+                    continue
+                
+                # Check if restart is needed
+                threshold = device.get("memory_threshold", 200)
+                restart_needed = False
+                restart_reason = ""
+                
+                if not is_alive:
+                    restart_needed = True
+                    restart_reason = "API reports device as offline"
+                
+                elif mem_free > 0 and mem_free < threshold * 1024:
+                    # Restart if memory is below the configured threshold
+                    restart_needed = True
+                    restart_reason = f"Low memory: {mem_mb:.2f} MB (Threshold: {threshold} MB)"
+    
+                    # Check notification cooldown for memory restart
+                    last_memory_notification = status.get("last_memory_notification", 0)
+                    if current_time - last_memory_notification > notification_cooldown:
+                        await notify_memory_restart(display_name, device_id, mem_free, threshold)
+                        status["last_memory_notification"] = current_time
+                        device_status_cache[device_id] = status
+                    else:
+                        # Memory is below threshold but not critically low
+                        log("Memory below threshold but not critical", device_id, "MONITOR")
+                
+                # Always check if the device was restarted recently to avoid restart loops
+                last_restart_time = status.get("last_restart_time", 0)
+                time_since_last_restart = current_time - last_restart_time
+                min_restart_interval = 900  # 15 minutes minimum between restarts
+                
+                if restart_needed and time_since_last_restart < min_restart_interval:
+                    minutes_to_wait = (min_restart_interval - time_since_last_restart) / 60
+                    log(f"Restart needed but restarted {time_since_last_restart:.0f}s ago - waiting {minutes_to_wait:.1f} min", device_id, "MONITOR")
+                    restart_needed = False
+                
+                # Handle restart if needed
+                if restart_needed:
+                    log(f"Restart: {restart_reason}", device_id, "MONITOR")
+                    success = await optimized_app_start(device_id, True)
+                    
+                    # Record restart time
+                    device_status_cache[device_id]["last_restart_time"] = current_time
+                    
+                    if success:
+                        log("Apps restarted successfully", device_id, "MONITOR")
+                        # Important: Update the status in the cache
+                        device_status_cache[device_id]["is_alive"] = True
+                        
+                        # This is a system restart, not a status change from the API
+                        # If it was offline before, we should send "back online" notification
+                        if not was_alive:
+                            log("Online notification sent after restart", device_id, "MONITOR")
+                            await notify_device_online(display_name, device_id)
+                            status["last_online_notification"] = current_time
+                            device_status_cache[device_id] = status
+                    else:
+                        log("App restart failed", device_id, "ERROR")
+                
+                # Always update last status to track changes
+                device_last_status[device_id] = {
+                    "is_alive": is_alive
+                }
+                
+            # Update UI with current status
+            status_data = await get_status_data()
+            await ws_manager.broadcast(status_data)
+                
+        except Exception as e:
+            log(f"Monitoring error: {str(e)}", None, "ERROR")
+            traceback.print_exc()
+        
+        # Wait until next check
+        await asyncio.sleep(monitoring_interval)
+async def perform_installations(device_ips: List[str], apk_path: Path, apk_type: str = "google"):
+    """
+    Performs installations on multiple devices with progress tracking.
+    Uses the optimized installation process.
+    
+    Args:
+        device_ips: List of device IPs to install on
+        apk_path: Path to APK file (Samsung) or extract directory (Google)
+        apk_type: "google" for .apkm (extracted folder), "samsung" for .apk (single file)
+    """
+    
+    try:
+        state.update_in_progress = True
+        total_devices = len(device_ips)
+        
+        device_increment = 100 / total_devices if total_devices > 0 else 100
+        
+        for index, ip in enumerate(device_ips, 1):
+            try:
+                start_progress = int((index - 1) * device_increment)
+                end_progress = int(index * device_increment)
+                
+                update_progress(start_progress)
+                log(f"Update {index}/{total_devices} started ({apk_type})", ip, "UPDATE")
+                
+                # Run installation with progress tracking
+                success = await optimized_perform_installation(ip, apk_path, apk_type)
+                
+                if success:
+                    log("Update successful", ip, "UPDATE")
+                else:
+                    log("Update failed", ip, "ERROR")
+                
+                update_progress(end_progress)
+                
+            except Exception as e:
+                log(f"Update error: {str(e)}", ip, "ERROR")
+                update_progress(int(index * device_increment))
+                clear_device_update_status(ip)
+        
+        update_progress(100)
+        
+        # Update UI with new status
+        status_data = await get_status_data()
+        await ws_manager.broadcast(status_data)
+        
+        await asyncio.sleep(2)
+        
+    finally:
+        state.update_in_progress = False
+        state.current_progress = 0
+async def update_api_status():
+    """Periodically updates device status information from API with reduced ADB calls"""
+    device_last_status = {}  # Track previous status for change detection
+    
+    while True:
+        try:
+            config = load_config()
+            current_time = time.time()
+            
+            # Check if the required API configuration exists
+            if not all(key in config for key in ["rotomApiUrl", "rotomApiUser", "rotomApiPass"]):
+                log("API configuration incomplete, skipping check", None, "API")
+                await asyncio.sleep(60)
+                continue
+                
+            async with httpx.AsyncClient() as client:
+                auth = (config["rotomApiUser"], config["rotomApiPass"])
+                response = await client.get(
+                    config["rotomApiUrl"], 
+                    auth=auth, 
+                    timeout=10
+                )
+                
+                # Check for successful response
+                if response.status_code != 200:
+                    log(f"API returned status code {response.status_code}", None, "API")
+                    await asyncio.sleep(60)
+                    continue
+                    
+                try:
+                    api_data = response.json()
+                except json.JSONDecodeError:
+                    log("Failed to parse API response as JSON", None, "ERROR")
+                    await asyncio.sleep(60)
+                    continue
+
+            # Process each device
+            for dev in config.get("devices", []):
+                device_id = dev["ip"]  # This can be either IP:port or serial number
+                
+                # Determine if this is a USB device (no digits/periods/colons) or network device
+                is_network_device = ":" in device_id and all(c.isdigit() or c == '.' or c == ':' for c in device_id)
+                
+                # Find matching device data, with more robust matching
+                device_data = None
+                details = get_device_details(device_id)
+                display_name = details.get("display_name", "").lower()
+                
+                # For network devices, extract IP for matching
+                device_ip_for_matching = None
+                if is_network_device:
+                    device_ip_for_matching = device_id.split(":")[0]
+                
+                for api_device in api_data.get("devices", []):
+                    origin = api_device.get("origin", "").lower()
+                    # Try different matching approaches
+                    if (display_name and display_name in origin) or \
+                       (device_ip_for_matching and device_ip_for_matching in origin):
+                        device_data = api_device
+                        break
+                
+                if not device_data:
+                    device_data = {}
+                    log(f"No matching device data found for {device_id} in API response", device_id, "MONITOR")
+                else:
+                    # Try RotomNG format first, then fallback to RotomNG legacy format
+                    mem_free_kb = device_data.get('last_memory', {}).get('free', 'N/A')
+                    if mem_free_kb == 'N/A':
+                        mem_free_kb = device_data.get('lastMemory', {}).get('memFree', 'N/A')
+                    log(f"Found device data for {device_id}: memFree={mem_free_kb}", device_id, "MONITOR")
+                
+                # Get current status values from cache
+                current_cache = device_status_cache.get(device_id, {})
+                
+                # Improved initialization of runtime tracking
+                if device_id not in device_runtimes:
+                    device_runtimes[device_id] = {
+                        "start_time": current_time if current_cache.get("is_alive", False) else None,
+                        "last_runtime": None
+                    }
+                    log("Runtime tracking initialized", device_id, "MONITOR")
+                
+                # Add a variable to track when a device was first detected as offline
+                first_detected_offline = current_cache.get("first_detected_offline", 0)
+                
+                # Handle memory values - if API returns 0, device is likely rebooting
+                # Keep 0 so memory threshold checks are skipped (condition: mem_free > 0)
+                # Try RotomNG format first, then fallback to RotomNG legacy format
+                new_mem_free = device_data.get("last_memory", {}).get("free", 0)
+                if new_mem_free == 0:
+                    new_mem_free = device_data.get("lastMemory", {}).get("memFree", 0)
+                mem_free = new_mem_free
+                
+                if new_mem_free == 0:
+                    log("Memory=0 - device likely rebooting, skipping memory checks", device_id, "MONITOR")
+                
+                # Handle isAlive status with improved grace period logic
+                current_is_alive = current_cache.get("is_alive", False)
+                # Try RotomNG format first, then fallback to RotomNG legacy format
+                new_is_alive = device_data.get("is_connected", False)
+                if not new_is_alive:
+                    new_is_alive = device_data.get("isAlive", False)
+                
+                # If device is newly detected as offline
+                if current_is_alive and not new_is_alive:
+                    # Store the timestamp of first offline detection
+                    if first_detected_offline == 0:
+                        first_detected_offline = current_time
+                        log(f"First detected offline at {datetime.datetime.fromtimestamp(current_time).strftime('%H:%M:%S')}", device_id, "MONITOR")
+                # If device is online again, reset the offline detection timestamp
+                elif new_is_alive:
+                    first_detected_offline = 0
+                
+                # Check if the grace period is still active (60 seconds)
+                grace_period = 60
+                if (not new_is_alive and current_is_alive and first_detected_offline > 0 and 
+                    (current_time - first_detected_offline < grace_period)):
+                    log(f"Reported not alive but in grace period ({int(current_time - first_detected_offline)}s)", device_id, "MONITOR")
+                    is_alive = True
+                else:
+                    # Outside grace period or never detected as offline
+                    is_alive = new_is_alive
+                    
+                    # If a device is now officially marked as offline (after grace period)
+                    if not is_alive and current_is_alive and first_detected_offline > 0:
+                        log(f"Now officially offline after grace period ({int(current_time - first_detected_offline)}s)", device_id, "MONITOR")
+                
+                # ADB connection is checked only when needed
+                adb_status = True  # Assume connected unless proven otherwise
+                adb_error = ""
+                
+                # Only check ADB connection if device is alive or for devices needing status check
+                if is_alive or not current_cache.get("adb_status", False):
+                    adb_status, adb_error = check_adb_connection(device_id)
+                else:
+                    # Reuse last status if device is offline
+                    adb_status = current_cache.get("adb_status", False)
+                    adb_error = current_cache.get("adb_error", "")
+                
+                # Check if device was offline and is now online (rebooted/restarted)
+                prev_status = device_last_status.get(device_id, {})
+                prev_is_alive = prev_status.get("is_alive", False)
+                
+                # Calculate current runtime
+                current_runtime = None
+                
+                if is_alive and device_runtimes[device_id]["start_time"]:
+                    current_runtime = current_time - device_runtimes[device_id]["start_time"]
+                
+                # Improved offline/online transition handling
+                # If device just came back online - reset runtime counter
+                if is_alive and not prev_is_alive:
+                    log("Changed from offline to online, resetting runtime counter", device_id, "MONITOR")
+                    
+                    # Don't overwrite existing last_runtime when coming back online
+                    # Preserve the existing last_runtime value from the cache
+                    existing_last_runtime = current_cache.get("last_runtime")
+                    
+                    # Only set a new runtime if there isn't already a valid one
+                    if existing_last_runtime is None and current_cache.get("runtime") is not None and current_cache.get("runtime") > 60:
+                        log(f"Storing previous runtime: {format_runtime(current_cache.get('runtime'))}", device_id, "MONITOR")
+                        device_runtimes[device_id]["last_runtime"] = current_cache.get("runtime")
+                    elif existing_last_runtime is not None:
+                        log(f"Preserving existing last_runtime: {format_runtime(existing_last_runtime)}", device_id, "MONITOR")
+                        device_runtimes[device_id]["last_runtime"] = existing_last_runtime
+                    
+                    # Set new start time
+                    device_runtimes[device_id]["start_time"] = current_time
+                    current_runtime = 0  # Just started
+                    
+                    # Force version refresh
+                    version_manager.mark_for_refresh(device_id)
+                
+                # Handle online to offline transition as well
+                elif not is_alive and prev_is_alive:
+                    log("Changed from online to offline, preserving runtime", device_id, "MONITOR")
+                    # If we have a current runtime when going offline, store it
+                    previous_runtime = current_cache.get("runtime", None)
+                    if previous_runtime is not None and previous_runtime > 60:
+                        log(f"Storing previous runtime: {format_runtime(previous_runtime)}", device_id, "MONITOR")
+                        device_runtimes[device_id]["last_runtime"] = previous_runtime
+                        device_runtimes[device_id]["start_time"] = None
+                
+                # Update device status cache with all values
+                device_status_cache[device_id] = {
+                    "is_alive": is_alive,
+                    "mem_free": mem_free,
+                    "last_update": current_time,
+                    "adb_status": adb_status,
+                    "adb_error": adb_error,
+                    "first_detected_offline": first_detected_offline,
+                    "last_notification_time": current_cache.get("last_notification_time", 0),
+                    "last_details_check": current_cache.get("last_details_check", 0),
+                    "runtime": current_runtime if current_runtime and current_runtime > 0 else None,
+                    "last_runtime": device_runtimes[device_id]["last_runtime"] if device_runtimes[device_id]["last_runtime"] and device_runtimes[device_id]["last_runtime"] > 60 else current_cache.get("last_runtime")
+                }
+                
+                # Store current status for next comparison
+                device_last_status[device_id] = {
+                    "is_alive": is_alive
+                }
+                
+                # Format runtime for display
+                runtime_str = ""
+                if current_runtime is not None and current_runtime > 0:
+                    runtime_str = f" - Runtime: {format_runtime(current_runtime)}"
+                    if device_runtimes[device_id]["last_runtime"] is not None and device_runtimes[device_id]["last_runtime"] > 60:
+                        runtime_str += f" (last runtime: {format_runtime(device_runtimes[device_id]['last_runtime'])})"
+                
+                # Version info is only refreshed once every 5 minutes to reduce ADB calls
+                if is_alive and adb_status and current_time - current_cache.get("last_details_check", 0) > 300:
+                    # Only fetch on demand (triggered by state changes)
+                    device_status_cache[device_id]["last_details_check"] = current_time
+
+            # Send device status update to all WebSocket clients
+            status_data = await get_status_data()
+            await ws_manager.broadcast(status_data)
+
+        except Exception as e:
+            log(f"API update error: {str(e)}", None, "ERROR")
+            import traceback
+            traceback.print_exc()
+        
+        # Use the configured check interval or default to 15 seconds
+        check_interval = config.get("api_check_interval", 15)
+        await asyncio.sleep(check_interval)
+async def get_status_data(apk_type: str = "google"):
+    """Collects status data for WebSocket updates, similar to /api/status endpoint"""
+    config = load_config()
+    devices = []
+    
+    # Always get local versions only for dropdown display
+    versions = get_available_local_versions("all")
+    pogo_latest = versions.get("latest", {}).get("version", "N/A")
+    pogo_previous = versions.get("previous", {}).get("version", "N/A")
+
+    current_time = time.time()
+    last_version_debug = getattr(get_status_data, 'last_version_debug', 0)
+    if not hasattr(get_status_data, 'last_versions') or get_status_data.last_versions != (pogo_latest, pogo_previous) or current_time - last_version_debug > 300:
+        log(f"Status data - Latest: {pogo_latest}, Previous: {pogo_previous} (local only)", None, "INFO")
+        get_status_data.last_versions = (pogo_latest, pogo_previous)
+        get_status_data.last_version_debug = current_time
+    
+    for dev in config["devices"]:
+        ip = dev["ip"]
+        status = device_status_cache.get(ip, {})
+        details = get_device_details(ip)
+        current_runtime = status.get("runtime")
+        last_runtime = status.get("last_runtime")
+        runtime_formatted = format_runtime(current_runtime) if current_runtime is not None else "N/A"
+        last_runtime_formatted = format_runtime(last_runtime) if last_runtime is not None else "N/A"
+
+        default_status = {
+            "is_alive": False,
+            "mem_free": 0,
+            "last_update": 0,
+            "adb_status": False,
+            "adb_error": "No connection",
+            "last_runtime": None
+        }
+        status = {**default_status, **status}
+        
+        # Check if device is in update process
+        in_update = False
+        update_info = ""
+        formatted_ip = format_device_id(ip)
+        if formatted_ip in devices_in_update and devices_in_update[formatted_ip]["in_update"]:
+            in_update = True
+            update_type = devices_in_update[formatted_ip]["update_type"]
+            update_duration = int(time.time() - devices_in_update[formatted_ip]["started_at"])
+            update_info = f"{update_type} ({update_duration}s)"
+        
+        devices.append({
+            "display_name": details.get("display_name", ip.split(":")[0]),
+            "ip": ip,
+            "status": status.get("adb_status", False),
+            "adb_error": status.get("adb_error", ""),
+            "is_alive": status["is_alive"],
+            "pogo": details.get("pogo_version", "N/A"),
+            "mitm": details.get("mitm_version", "N/A"),
+            "module": details.get("module_version", "N/A"),
+            "mem_free": status.get("mem_free", 0),
+            "last_update": status["last_update"],
+            "control_enabled": dev.get("control_enabled", False),
+            "in_update": in_update,
+            "update_info": update_info,
+            "runtime": current_runtime,
+            "last_runtime": last_runtime
+        })
+    
+    return {
+        "devices": devices,
+        "now": time.time(),
+        "pogo_latest": pogo_latest,
+        "pogo_previous": pogo_previous,
+        "pif_auto_update_enabled": config.get("pif_auto_update_enabled", True),
+        "pogo_auto_update_enabled": config.get("pogo_auto_update_enabled", True),
+        "update_in_progress": state.update_in_progress,
+        "update_progress": state.current_progress,
+        "apk_type": apk_type
+    }
