@@ -86,11 +86,20 @@ def log(message: str, device_id: str = None, category: str = "INFO"):
     if device_id:
         device_id = format_device_id(device_id)
         with _display_name_cache_lock:
-            if device_id not in _display_name_cache:
-                config = load_config()
-                device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
-                _display_name_cache[device_id] = device.get("display_name") if device else device_id.split(":")[0]
-            tag = _display_name_cache[device_id]
+            cached = _display_name_cache.get(device_id)
+
+        if cached is None:
+            # load_config() acquires config_lock - must not be called while
+            # holding _display_name_cache_lock, or this can deadlock against
+            # save_config() (which holds config_lock while calling
+            # clear_display_name_cache(), which needs this same lock).
+            config = load_config()
+            device = next((d for d in config.get("devices", []) if d["ip"] == device_id), None)
+            cached = device.get("display_name") if device else device_id.split(":")[0]
+            with _display_name_cache_lock:
+                _display_name_cache[device_id] = cached
+
+        tag = cached
     else:
         tag = "--SYSTEM--"
 
@@ -602,9 +611,6 @@ def save_config(config):
                     os.unlink(tmp_path)
                 raise
 
-            # Clear display name cache when config changes
-            clear_display_name_cache()
-
         except Exception as e:
             log(f"Error saving config: {e}", None, "ERROR")
             # Try to restore from backup
@@ -616,6 +622,14 @@ def save_config(config):
                     log("Config restored from backup", None, "CONFIG")
                 except Exception as restore_error:
                     log(f"Failed to restore config: {restore_error}", None, "ERROR")
+            return
+
+    # Clear display name cache when config changes. This must happen after
+    # config_lock is released above - it acquires _display_name_cache_lock,
+    # and doing that while still holding config_lock could deadlock against
+    # log() (which holds _display_name_cache_lock while calling
+    # load_config(), which needs config_lock).
+    clear_display_name_cache()
 
 def load_config():
     """
@@ -2676,13 +2690,26 @@ def download_apk(version_info: Dict) -> Path:
         log(f"Download failed: {str(e)}", None, "ERROR")
         raise
 
-def ensure_latest_apk_downloaded():
+def ensure_latest_apk_downloaded() -> Optional[str]:
+    """
+    Checks for and downloads the latest PoGo APK if not already present.
+
+    This function is synchronous and does blocking network I/O (version
+    check + potentially a full APK download), so callers must always invoke
+    it via run_in_executor - never directly on the event loop. It used to
+    call asyncio.create_task() internally, which only works on the event
+    loop's own thread; it now just returns the newly-downloaded version (or
+    None) so the async caller can schedule follow-up tasks itself.
+
+    Returns:
+        The version string if a new APK was downloaded, otherwise None.
+    """
     APK_DIR.mkdir(parents=True, exist_ok=True)
     versions = get_available_versions()
     
     if not versions.get("latest"):
         log("No latest version information available", None, "VERSION")
-        return
+        return None
         
     latest_version = versions["latest"]["version"]
     log(f"Latest available version: {latest_version}", None, "VERSION")
@@ -2691,10 +2718,24 @@ def ensure_latest_apk_downloaded():
     if not target_file.exists():
         log(f"New version {latest_version} not found locally, downloading", None, "UPDATE")
         download_apk(versions["latest"])
-        asyncio.create_task(notify_update_downloaded("Pokemon GO", latest_version))
-        asyncio.create_task(update_ui_with_new_version())
+        return latest_version
     else:
         log(f"Latest version {latest_version} already downloaded", None, "UPDATE")
+        return None
+
+async def run_apk_check_and_notify():
+    """
+    Async-safe entry point for the APK freshness check. Runs the blocking
+    ensure_latest_apk_downloaded() in a worker thread so it never stalls the
+    event loop, then schedules the notification/UI-refresh follow-ups (which
+    themselves need the event loop) if a new version was downloaded.
+    """
+    loop = asyncio.get_event_loop()
+    downloaded_version = await loop.run_in_executor(None, ensure_latest_apk_downloaded)
+    if downloaded_version:
+        asyncio.create_task(notify_update_downloaded("Pokemon GO", downloaded_version))
+        asyncio.create_task(update_ui_with_new_version())
+
 
 async def update_ui_with_new_version():
     """Updates all connected WebSocket clients with new version information"""
@@ -3477,8 +3518,8 @@ async def optimized_pogo_update_task():
             latest_version = versions["latest"]["version"]
             log(f"Latest available PoGO version: {latest_version}", None, "VERSION")
             
-            # Always download latest version
-            ensure_latest_apk_downloaded()
+            # Always download latest version (offloaded, see run_apk_check_and_notify)
+            await run_apk_check_and_notify()
             
             # Check if auto updates are enabled
             if not config.get("pogo_auto_update_enabled", True):
@@ -3495,7 +3536,15 @@ async def optimized_pogo_update_task():
             config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
             
             # Find devices needing update - OPTIMIZED: Uses VersionManager
-            devices_to_update = version_manager.get_devices_needing_pogo_update(latest_version)
+            # Runs in a worker thread: this call is blocking and serial (one
+            # ADB connection check per device, by design, to avoid hammering
+            # ADB/risking bans) and can take a long time for large fleets.
+            # Running it inline on the event loop would freeze all other
+            # requests and WebSocket updates for the whole duration.
+            loop = asyncio.get_event_loop()
+            devices_to_update = await loop.run_in_executor(
+                None, version_manager.get_devices_needing_pogo_update, latest_version
+            )
             
             # Filter devices not in config
             devices_to_update = [dev for dev in devices_to_update if dev in config_device_ips]
@@ -4404,8 +4453,8 @@ async def scheduled_update_task():
                     else:
                         log("Scheduled download failed", None, "ERROR")
                 
-                # PoGO Updates (existing function)
-                ensure_latest_apk_downloaded()
+                # PoGO Updates (offloaded, see run_apk_check_and_notify)
+                await run_apk_check_and_notify()
                 
                 # Mark this hour as completed for today
                 last_run_dates.add((today, current_hour))
@@ -5042,6 +5091,65 @@ async def install_pif_module(device_ip: str, pif_module_path=None):
     return await install_module_with_progress(device_ip, pif_module_path, "fork")
 
 # Optimized Module Update Task
+def _scan_devices_for_module_update(config: dict, new_version: str) -> list:
+    """
+    Blocking, serial scan of all configured devices to find which ones need
+    a PlayIntegrityFork module update. Involves multiple ADB/subprocess calls
+    per device (connection check + up to 4 version lookups), so this must
+    always be called via run_in_executor from async code - never inline on
+    the event loop, or it will stall the entire server (including startup)
+    for the duration of the whole scan.
+    """
+    devices_to_update = []
+
+    for device in config.get("devices", []):
+        device_id = device["ip"]
+
+        connected, error = check_adb_connection(device_id)
+        if not connected:
+            log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
+            continue
+
+        version_info = version_manager.get_version_info(device_id, force_refresh=False)
+
+        if not version_info:
+            log("No version information available", device_id, "VERSION")
+            continue
+
+        installed_module = version_info.get("module_version", "N/A").strip()
+
+        # Skip devices without any module installed
+        if installed_module == "N/A":
+            log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
+            continue
+
+        module_is_fork = "Fork" in installed_module
+
+        # Skip devices with Fix module - only update Fork devices
+        if not module_is_fork:
+            log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
+            continue
+
+        # Extract and compare versions
+        version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
+
+        if version_match:
+            current_version = version_match.group(1)
+            try:
+                current_tuple = parse_version(current_version)
+                new_tuple = parse_version(new_version)
+
+                if current_tuple < new_tuple:
+                    log(f"Update needed: {current_version} -> {new_version}", device_id, "UPDATE")
+                    devices_to_update.append(device_id)
+            except (ValueError, AttributeError):
+                devices_to_update.append(device_id)
+        else:
+            devices_to_update.append(device_id)
+
+    return devices_to_update
+
+
 async def optimized_module_update_task():
     """Checks and installs PlayIntegrityFork updates with reduced version queries"""
     while True:
@@ -5073,53 +5181,13 @@ async def optimized_module_update_task():
                 continue
 
             # Find devices needing update
-            devices_to_update = []
+            # Runs in a worker thread - see _scan_devices_for_module_update()
+            # docstring for why this must never run directly on the event loop.
             config_device_ips = {dev["ip"] for dev in config.get("devices", [])}
-            
-            for device in config.get("devices", []):
-                device_id = device["ip"]
-                
-                connected, error = check_adb_connection(device_id)
-                if not connected:
-                    log(f"ADB not reachable, skipping update check: {error}", device_id, "UPDATE")
-                    continue
-                    
-                version_info = version_manager.get_version_info(device_id, force_refresh=False)
-                
-                if not version_info:
-                    log("No version information available", device_id, "VERSION")
-                    continue
-                    
-                installed_module = version_info.get("module_version", "N/A").strip()
-                
-                # Skip devices without any module installed
-                if installed_module == "N/A":
-                    log("No PlayIntegrity module found, skipping", device_id, "UPDATE")
-                    continue
-                    
-                module_is_fork = "Fork" in installed_module
-                
-                # Skip devices with Fix module - only update Fork devices
-                if not module_is_fork:
-                    log("Has Fix module, skipping (only Fork devices are updated)", device_id, "UPDATE")
-                    continue
-                
-                # Extract and compare versions
-                version_match = re.search(r'Fork\s+v?(\d+(?:\.\d+)?.*|v?\d+)', installed_module)
-                    
-                if version_match:
-                    current_version = version_match.group(1)
-                    try:
-                        current_tuple = parse_version(current_version)
-                        new_tuple = parse_version(new_version)
-                        
-                        if current_tuple < new_tuple:
-                            log(f"Update needed: {current_version} -> {new_version}", device_id, "UPDATE")
-                            devices_to_update.append(device_id)
-                    except (ValueError, AttributeError):
-                        devices_to_update.append(device_id)
-                else:
-                    devices_to_update.append(device_id)
+            loop = asyncio.get_event_loop()
+            devices_to_update = await loop.run_in_executor(
+                None, _scan_devices_for_module_update, config, new_version
+            )
 
             update_count = len(devices_to_update)
             if update_count > 0:
@@ -5748,7 +5816,10 @@ async def update_api_status():
                 
                 # Only check ADB connection if device is alive or for devices needing status check
                 if is_alive or not current_cache.get("adb_status", False):
-                    adb_status, adb_error = check_adb_connection(device_id)
+                    loop = asyncio.get_event_loop()
+                    adb_status, adb_error = await loop.run_in_executor(
+                        None, check_adb_connection, device_id
+                    )
                 else:
                     # Reuse last status if device is offline
                     adb_status = current_cache.get("adb_status", False)
@@ -6009,16 +6080,28 @@ async def get_status_data_with_tailwind_classes(apk_type: str = "google"):
     return data
 
 # FastAPI Initialization
+async def startup_apk_and_key_check():
+    """
+    Runs the initial ADB key sync and PoGo APK freshness check/download in
+    the background, off the event loop. These used to run synchronously
+    before lifespan() yielded, which meant Uvicorn could not finish its
+    startup event - and would refuse every connection outright - until both
+    completed. A slow/unreachable APK mirror could stall this for a long
+    time. Now the server becomes reachable immediately, and this check
+    happens in parallel.
+    """
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, sync_system_adb_key)
+    await run_apk_check_and_notify()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize ADB connection pool
     adb_pool.cleanup_connections()
     
-    # Sync ADB keys for authorization
-    sync_system_adb_key()
-    
-    # Initialize with latest APK
-    ensure_latest_apk_downloaded()
+    # Run ADB key sync + APK freshness check in the background instead of
+    # blocking startup (see startup_apk_and_key_check docstring)
+    asyncio.create_task(startup_apk_and_key_check())
     
     # Start background tasks
     asyncio.create_task(update_api_status())
@@ -6254,7 +6337,13 @@ async def status_page(request: Request, apk_type: str = "google"):
         devices.append({
             "display_name": details.get("display_name", ip.split(":")[0]),
             "ip": ip,
-            "status": check_adb_connection(ip)[0],
+            # Use the cached ADB status (kept fresh by the background monitoring
+            # task) instead of calling check_adb_connection() live here. That
+            # call is a blocking subprocess call with retries and can take
+            # 30s+ per device - running it inline in this async route handler
+            # blocked the entire event loop (all requests, WebSocket updates,
+            # background tasks) for every /status page load.
+            "status": status.get("adb_status", False),
             "is_alive": status["is_alive"],
             "pogo": details.get("pogo_version", "N/A"),
             "mitm": details.get("mitm_version", "N/A"),
