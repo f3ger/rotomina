@@ -932,7 +932,7 @@
                     <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Mode Settings</h4>
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <!-- Device Mode -->
-                        <div x-data="{ deviceMode: rotomConfigDevice.furtif_config.AttachOrSpawn ? 'attach' : 'spawn' }" class="col-span-1 sm:col-span-1 lg:col-span-2">
+                        <div x-data="{ deviceMode: 'spawn' }" class="col-span-1 sm:col-span-1 lg:col-span-2" x-init="$watch('rotomConfigDevice.furtif_config.AttachOrSpawn', (value) => { deviceMode = value ? 'attach' : 'spawn' })">
                             <label class="block text-sm font-medium text-gray-300 mb-1">Device Mode</label>
                             <select name="DeviceMode"
                                 class="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3 transition-colors"
